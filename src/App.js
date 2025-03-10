@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from "react";
 import SendbirdChat from "@sendbird/chat";
 import { GroupChannelModule } from "@sendbird/chat/groupChannel";
 
-const APP_ID = "YOUR-APP-ID";
+const APP_ID = "BFB0CED3-D43A-4C53-9C75-76549E1FFD78";
 const sb = SendbirdChat.init({
   appId: APP_ID,
   modules: [new GroupChannelModule()],
