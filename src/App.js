@@ -3,20 +3,234 @@ import React, { useEffect, useState, useRef } from "react";
 import SendbirdChat from "@sendbird/chat";
 import { GroupChannelModule } from "@sendbird/chat/groupChannel";
 
-const APP_ID = "BFB0CED3-D43A-4C53-9C75-76549E1FFD78";
+const APP_ID = "BFB0CED3-D43A-4C75-76549E1FFD78";
 const sb = SendbirdChat.init({
   appId: APP_ID,
   modules: [new GroupChannelModule()],
 });
 
-const ChatApp = () => {
-  const [userId] = useState("test_01");
+// New LoginView Component
+const LoginView = ({ onLoginSuccess, initialError = "" }) => {
+  const [userId, setUserId] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(initialError);
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+
+  // Reset error when initialError changes
+  useEffect(() => {
+    if (initialError) {
+      setError(initialError);
+    }
+  }, [initialError]);
+
+  // Connection timeout handler
+  useEffect(() => {
+    let timeoutId = null;
+    
+    if (isLoading && connectionAttempt > 0) {
+      // Set a timeout to prevent hanging on connecting
+      timeoutId = setTimeout(() => {
+        setIsLoading(false);
+        setError("Connection timeout. The server might be unavailable. Please try again later.");
+      }, 20000); // 20 second timeout
+    }
+    
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [isLoading, connectionAttempt]);
+
+    const handleLogin = async (e) => {
+    e.preventDefault();
+    
+    if (!userId.trim()) {
+      setError("User ID is required");
+      return;
+    }
+    
+    setIsLoading(true);
+    setError("");
+    setConnectionAttempt(prev => prev + 1);
+    
+    try {
+      // Force disconnect any existing connection
+      if (sb.currentUser) {
+        try {
+          await sb.disconnect();
+          console.log("Disconnected existing user before login");
+          // Small delay to ensure the disconnect completes
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (disconnectError) {
+          console.warn("Error disconnecting existing user:", disconnectError);
+          // Continue anyway
+        }
+      }
+      
+      console.log(`Attempting to connect with userId: ${userId}`);
+      
+      // Direct connection with minimal complexity
+      const user = await sb.connect(userId.trim());
+      console.log("Successfully connected to Sendbird:", user);
+      
+      // Update user's nickname if provided
+      if (nickname.trim()) {
+        try {
+          await sb.updateCurrentUserInfo({
+            nickname: nickname.trim()
+          });
+          console.log("Nickname updated successfully");
+        } catch (nicknameError) {
+          console.warn("Failed to update nickname:", nicknameError);
+          // Continue anyway, nickname update is not critical
+        }
+      }
+      
+      // Call the onLoginSuccess callback with the userId
+      onLoginSuccess(userId.trim());
+    } catch (error) {
+      console.error("Login error:", error);
+      
+      let errorMessage = "Failed to connect to chat.";
+      
+      // More specific error messages based on the error type
+      if (error.code) {
+        switch (error.code) {
+          case 400101:
+            errorMessage = "Invalid user ID format. Please try with a different ID.";
+            break;
+          case 400201:
+            errorMessage = "Authentication failed. Please check your credentials.";
+            break;
+          default:
+            errorMessage = `Connection error (${error.code}): ${error.message || "Unknown error"}`;
+        }
+      } else if (error.message && error.message.includes("Failed to fetch")) {
+        errorMessage = "Network error. Please check your internet connection and try again.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <div className="w-full max-w-md p-8 bg-white rounded-xl shadow-lg">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Chat Login</h1>
+          <p className="text-gray-600 mt-2">Sign in to start messaging</p>
+        </div>
+        
+        {error && (
+          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <p>{error}</p>
+              </div>
+              <div className="ml-auto pl-3">
+                <button
+                  onClick={() => setError("")}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  <span className="sr-only">Dismiss</span>
+                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        <form onSubmit={handleLogin}>
+          <div className="mb-6">
+            <label htmlFor="userId" className="block text-sm font-medium text-gray-700 mb-1">
+              User ID *
+            </label>
+            <input
+              id="userId"
+              type="text"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              placeholder="Enter your user ID"
+              required
+              disabled={isLoading}
+            />
+          </div>
+          
+          <div className="mb-6">
+            <label htmlFor="nickname" className="block text-sm font-medium text-gray-700 mb-1">
+              Nickname (optional)
+            </label>
+            <input
+              id="nickname"
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              placeholder="Enter your display name"
+              disabled={isLoading}
+            />
+          </div>
+          
+          <button
+            type="submit"
+            disabled={isLoading}
+            className={`w-full py-3 px-4 text-white font-medium rounded-lg transition-colors ${
+              isLoading ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-700"
+            }`}
+          >
+            {isLoading ? (
+              <div className="flex items-center justify-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Connecting...
+              </div>
+            ) : (
+              "Sign In"
+            )}
+          </button>
+        </form>
+        
+        <div className="mt-6 text-center text-sm text-gray-500">
+          <p>Demo accounts: test_01, test_02, test_03</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MessageView = ({ userId, onConnectionError }) => {
   const [channels, setChannels] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [error, setError] = useState("");
   const messagesEndRef = useRef(null);
+  
+  // Forward connection errors to parent component
+  useEffect(() => {
+    if (error && error.includes("Connection")) {
+      if (onConnectionError) {
+        onConnectionError(error);
+      }
+    }
+  }, [error, onConnectionError]);
 
   // 1) Debug version of getMessageText
   const getMessageText = (msg) => {
@@ -80,32 +294,86 @@ const ChatApp = () => {
 
   // Connect to Sendbird
   useEffect(() => {
+    let isComponentMounted = true;
+    let connectionTimeoutId = null;
+
     const connect = async () => {
       try {
-        await sb.connect(userId);
-        setIsConnected(true);
-        console.log("Connected to Sendbird");
-        const channels = await loadChannels();
-        if (channels && channels.length > 0) {
-          const firstChannel = channels[0];
-          setSelectedChannel(firstChannel);
-          loadMessages(firstChannel);
+        // Set a connection timeout to prevent endless "connecting" state
+        connectionTimeoutId = setTimeout(() => {
+          if (isComponentMounted) {
+            console.error("Connection timeout reached");
+            setIsConnected(false);
+            setError("Connection timeout. Please refresh and try again.");
+          }
+        }, 15000); // 15 second timeout
+
+        console.log("Attempting to connect with userId:", userId);
+        
+        // Force a new connection attempt regardless of current state
+        try {
+          // Disconnect first if already connected
+          if (sb.currentUser) {
+            await sb.disconnect();
+            console.log("Disconnected previous session");
+          }
+          
+          // Attempt new connection
+          await sb.connect(userId);
+          console.log("Successfully connected to Sendbird as:", userId);
+          
+          if (isComponentMounted) {
+            setIsConnected(true);
+            setError("");
+            clearTimeout(connectionTimeoutId);
+
+            // Load channels after successful connection
+            const channels = await loadChannels();
+            if (channels && channels.length > 0) {
+              const firstChannel = channels[0];
+              setSelectedChannel(firstChannel);
+              loadMessages(firstChannel);
+            }
+          }
+        } catch (error) {
+          console.error("Direct connection error:", error);
+          if (isComponentMounted) {
+            setIsConnected(false);
+            setError(`Connection failed: ${error.message || "Unknown error"}. Please try again.`);
+            clearTimeout(connectionTimeoutId);
+          }
         }
       } catch (error) {
-        console.error("Connection error:", error);
+        console.error("Outer connection error:", error);
+        if (isComponentMounted) {
+          setIsConnected(false);
+          setError(`Connection error: ${error.message || "Unknown error"}`);
+          clearTimeout(connectionTimeoutId);
+        }
       }
     };
+    
+    // Start connection process
     connect();
 
+    // Cleanup function
     return () => {
+      isComponentMounted = false;
+      if (connectionTimeoutId) {
+        clearTimeout(connectionTimeoutId);
+      }
+      
       try {
-        sb.disconnect();
-        console.log("Disconnected from Sendbird");
+        // Only disconnect if we're actually connected
+        if (sb.currentUser) {
+          sb.disconnect();
+          console.log("Disconnected from Sendbird");
+        }
       } catch (e) {
         console.error("Error disconnecting:", e);
       }
     };
-  }, [userId]);
+  }, [userId, loadChannels, loadMessages]);
 
   // Channel event handlers
   useEffect(() => {
@@ -169,37 +437,118 @@ const ChatApp = () => {
 
   const loadChannels = async () => {
     try {
-      const channelListQuery = sb.groupChannel.createMyGroupChannelListQuery();
-      channelListQuery.limit = 20;
-      channelListQuery.includeEmpty = true;
-      const fetchedChannels = await channelListQuery.next();
-      const sortedChannels = fetchedChannels.sort((a, b) => {
-        const aTimestamp = a.lastMessage?.createdAt || a.createdAt || 0;
-        const bTimestamp = b.lastMessage?.createdAt || b.createdAt || 0;
-        return bTimestamp - aTimestamp;
-      });
+      // Ensure connection is established before querying channels
+      if (!sb.currentUser) {
+        console.log("No current user, reconnecting...");
+        try {
+          await sb.connect(userId);
+          setIsConnected(true);
+        } catch (connectError) {
+          console.error("Reconnection error:", connectError);
+          setIsConnected(false);
+          return [];
+        }
+      }
+      
+      // Add error handling and retry logic for channel fetching
+      const fetchChannelsWithRetry = async (maxRetries) => {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const channelListQuery = sb.groupChannel.createMyGroupChannelListQuery();
+            channelListQuery.limit = 20;
+            channelListQuery.includeEmpty = true;
+            const fetchedChannels = await channelListQuery.next();
+            
+            if (!fetchedChannels || !Array.isArray(fetchedChannels)) {
+              console.warn("Invalid channel data received, retrying...");
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+              continue;
+            }
+            
+            const sortedChannels = fetchedChannels.sort((a, b) => {
+              const aTimestamp = a.lastMessage?.createdAt || a.createdAt || 0;
+              const bTimestamp = b.lastMessage?.createdAt || b.createdAt || 0;
+              return bTimestamp - aTimestamp;
+            });
+            
+            return sortedChannels;
+          } catch (error) {
+            console.error(`Channel list error (attempt ${attempt + 1}/${maxRetries}):`, error);
+            
+            if (attempt >= maxRetries - 1) {
+              console.error("Max retries reached, giving up on channel fetch");
+              return [];
+            }
+            
+            // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          }
+        }
+        
+        return [];
+      };
+      
+      const sortedChannels = await fetchChannelsWithRetry(3);
       setChannels(sortedChannels);
       return sortedChannels;
     } catch (error) {
-      console.error("Channel list error:", error);
+      console.error("Channel list outer error:", error);
       return [];
     }
   };
 
   const joinChannel = async (channelUrl) => {
     try {
-      const channel = await sb.groupChannel.getChannel(channelUrl);
-      if (channel.isSuper && typeof channel.enter === "function") {
+      // Ensure we're connected before joining channel
+      if (!sb.currentUser) {
         try {
-          await channel.enter();
-        } catch (enterError) {
-          console.error("Channel enter error:", enterError);
+          await sb.connect(userId);
+          setIsConnected(true);
+          console.log("Reconnected before joining channel");
+        } catch (connectError) {
+          console.error("Failed to reconnect before joining channel:", connectError);
+          setError("Connection error. Please refresh and try again.");
+          return;
         }
       }
+      
+      const attemptJoinChannel = async (maxRetries) => {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            const channel = await sb.groupChannel.getChannel(channelUrl);
+            
+            if (channel.isSuper && typeof channel.enter === "function") {
+              try {
+                await channel.enter();
+              } catch (enterError) {
+                console.error("Channel enter error:", enterError);
+                // Continue even if enter fails - it might still work for some channel types
+              }
+            }
+            
+            return channel; // Success, return the channel
+          } catch (error) {
+            console.error(`Channel join error (attempt ${attempt + 1}/${maxRetries}):`, error);
+            
+            if (attempt >= maxRetries - 1) {
+              console.error("Max retries reached for joining channel");
+              throw error; // Re-throw to be caught by outer try-catch
+            }
+            
+            // Wait before retry with exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          }
+        }
+        
+        throw new Error("Failed to join channel after max retries");
+      };
+      
+      const channel = await attemptJoinChannel(3);
       setSelectedChannel(channel);
       loadMessages(channel);
     } catch (error) {
-      console.error("Channel join error:", error);
+      console.error("Channel join outer error:", error);
+      setError("Failed to join channel. Please try again.");
     }
   };
 
@@ -502,7 +851,21 @@ const formatMessageTime = (timestamp) => {
           </div>
         </div>
 
-        {/* Messages */}
+        {/* Error message display */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 mx-4 mt-4">
+          <span className="block sm:inline">{error}</span>
+          <span 
+            className="absolute top-0 bottom-0 right-0 px-4 py-3 cursor-pointer" 
+            onClick={() => setError("")}
+          >
+            <span className="sr-only">Dismiss</span>
+            <span className="text-red-500">×</span>
+          </span>
+        </div>
+      )}
+      
+      {/* Messages */}
         <div className="flex-1 p-8 overflow-y-auto space-y-6">
           {messageGroups.length > 0 ? (
             messageGroups.map((group, groupIndex) => {
@@ -638,4 +1001,68 @@ const formatMessageTime = (timestamp) => {
   );
 };
 
-export default ChatApp;
+const App = () => {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userId, setUserId] = useState("");
+  const [connectionError, setConnectionError] = useState("");
+
+  // Check for existing connection
+  useEffect(() => {
+    const checkExistingConnection = async () => {
+      if (sb.currentUser) {
+        try {
+          // If already connected, just use that connection
+          console.log("Found existing connection as:", sb.currentUser.userId);
+          setUserId(sb.currentUser.userId);
+          setIsLoggedIn(true);
+        } catch (error) {
+          console.error("Error checking existing connection:", error);
+          // Force disconnect any problematic connection
+          try {
+            await sb.disconnect();
+          } catch (e) {
+            console.warn("Error disconnecting problematic connection:", e);
+          }
+        }
+      }
+    };
+
+    checkExistingConnection();
+  }, []);
+
+  const handleLoginSuccess = (userId) => {
+    setUserId(userId);
+    setIsLoggedIn(true);
+    setConnectionError("");
+  };
+
+  const handleConnectionError = (error) => {
+    setConnectionError(error);
+    setIsLoggedIn(false);
+  };
+
+  // If we have a connection error while in the message view, show login again
+  useEffect(() => {
+    if (connectionError && isLoggedIn) {
+      setIsLoggedIn(false);
+    }
+  }, [connectionError, isLoggedIn]);
+
+  return (
+    <div>
+      {isLoggedIn ? (
+        <MessageView 
+          userId={userId} 
+          onConnectionError={handleConnectionError} 
+        />
+      ) : (
+        <LoginView 
+          onLoginSuccess={handleLoginSuccess}
+          initialError={connectionError} 
+        />
+      )}
+    </div>
+  );
+};
+
+export default App;
