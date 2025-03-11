@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef } from "react";
 import SendbirdChat from "@sendbird/chat";
 import { GroupChannelModule } from "@sendbird/chat/groupChannel";
 
-const APP_ID = "BFB0CED3-D43A-4C75-76549E1FFD78";
+const APP_ID = "BFB0CED3-D43A-4C53-9C75-76549E1FFD78";
 const sb = SendbirdChat.init({
   appId: APP_ID,
   modules: [new GroupChannelModule()],
@@ -15,7 +15,6 @@ const LoginView = ({ onLoginSuccess, initialError = "" }) => {
   const [nickname, setNickname] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(initialError);
-  const [connectionAttempt, setConnectionAttempt] = useState(0);
 
   // Reset error when initialError changes
   useEffect(() => {
@@ -24,26 +23,7 @@ const LoginView = ({ onLoginSuccess, initialError = "" }) => {
     }
   }, [initialError]);
 
-  // Connection timeout handler
-  useEffect(() => {
-    let timeoutId = null;
-    
-    if (isLoading && connectionAttempt > 0) {
-      // Set a timeout to prevent hanging on connecting
-      timeoutId = setTimeout(() => {
-        setIsLoading(false);
-        setError("Connection timeout. The server might be unavailable. Please try again later.");
-      }, 20000); // 20 second timeout
-    }
-    
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [isLoading, connectionAttempt]);
-
-    const handleLogin = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     
     if (!userId.trim()) {
@@ -53,67 +33,14 @@ const LoginView = ({ onLoginSuccess, initialError = "" }) => {
     
     setIsLoading(true);
     setError("");
-    setConnectionAttempt(prev => prev + 1);
     
     try {
-      // Force disconnect any existing connection
-      if (sb.currentUser) {
-        try {
-          await sb.disconnect();
-          console.log("Disconnected existing user before login");
-          // Small delay to ensure the disconnect completes
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (disconnectError) {
-          console.warn("Error disconnecting existing user:", disconnectError);
-          // Continue anyway
-        }
-      }
-      
-      console.log(`Attempting to connect with userId: ${userId}`);
-      
-      // Direct connection with minimal complexity
-      const user = await sb.connect(userId.trim());
-      console.log("Successfully connected to Sendbird:", user);
-      
-      // Update user's nickname if provided
-      if (nickname.trim()) {
-        try {
-          await sb.updateCurrentUserInfo({
-            nickname: nickname.trim()
-          });
-          console.log("Nickname updated successfully");
-        } catch (nicknameError) {
-          console.warn("Failed to update nickname:", nicknameError);
-          // Continue anyway, nickname update is not critical
-        }
-      }
-      
-      // Call the onLoginSuccess callback with the userId
-      onLoginSuccess(userId.trim());
+      // Simply pass the user ID and nickname to the parent component
+      // All Sendbird connection logic moved to MessageView
+      onLoginSuccess(userId.trim(), nickname.trim());
     } catch (error) {
       console.error("Login error:", error);
-      
-      let errorMessage = "Failed to connect to chat.";
-      
-      // More specific error messages based on the error type
-      if (error.code) {
-        switch (error.code) {
-          case 400101:
-            errorMessage = "Invalid user ID format. Please try with a different ID.";
-            break;
-          case 400201:
-            errorMessage = "Authentication failed. Please check your credentials.";
-            break;
-          default:
-            errorMessage = `Connection error (${error.code}): ${error.message || "Unknown error"}`;
-        }
-      } else if (error.message && error.message.includes("Failed to fetch")) {
-        errorMessage = "Network error. Please check your internet connection and try again.";
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      setError(errorMessage);
+      setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -214,12 +141,13 @@ const LoginView = ({ onLoginSuccess, initialError = "" }) => {
   );
 };
 
-const MessageView = ({ userId, onConnectionError }) => {
+const MessageView = ({ userId, nickname = "", onConnectionError }) => {
   const [channels, setChannels] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [error, setError] = useState("");
   const messagesEndRef = useRef(null);
   
@@ -231,6 +159,156 @@ const MessageView = ({ userId, onConnectionError }) => {
       }
     }
   }, [error, onConnectionError]);
+  
+  // Handle Sendbird connection when component mounts or userId changes
+  useEffect(() => {
+    let isComponentMounted = true;
+    let connectionTimeoutId = null;
+    
+    const connectToSendbird = async () => {
+      if (!userId) {
+        console.error("No user ID provided");
+        if (isComponentMounted) {
+          setError("No user ID provided. Please log in again.");
+          setIsConnecting(false);
+        }
+        return;
+      }
+      
+      setIsConnecting(true);
+      
+      // Set a connection timeout to prevent endless "connecting" state
+      connectionTimeoutId = setTimeout(() => {
+        if (isComponentMounted) {
+          console.error("Connection timeout reached");
+          setIsConnected(false);
+          setIsConnecting(false);
+          setError("Connection timeout. Please refresh and try again.");
+          if (onConnectionError) {
+            onConnectionError("Connection timeout. Please refresh and try again.");
+          }
+        }
+      }, 15000); // 15 second timeout
+      
+      try {
+        // Force disconnect any existing connection
+        if (sb.currentUser) {
+          try {
+            await sb.disconnect();
+            console.log("Disconnected existing user before login");
+            // Small delay to ensure the disconnect completes
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (disconnectError) {
+            console.warn("Error disconnecting existing user:", disconnectError);
+            // Continue anyway
+          }
+        }
+        
+        console.log(`Connecting to Sendbird with userId: ${userId}`);
+        
+        // Connect to Sendbird
+        const user = await sb.connect(userId);
+        console.log("Successfully connected to Sendbird:", user);
+        
+        if (!isComponentMounted) return;
+        
+        // Clear timeout and update connection state
+        clearTimeout(connectionTimeoutId);
+        connectionTimeoutId = null;
+        
+        // Update user's nickname if provided
+        if (nickname) {
+          try {
+            await sb.updateCurrentUserInfo({
+              nickname: nickname
+            });
+            console.log("Nickname updated successfully");
+          } catch (nicknameError) {
+            console.warn("Failed to update nickname:", nicknameError);
+            // Continue anyway, nickname update is not critical
+          }
+        }
+        
+        setIsConnected(true);
+        setIsConnecting(false);
+        setError("");
+        
+        // Load channels after successful connection
+        const channels = await loadChannels();
+        if (isComponentMounted && channels && channels.length > 0) {
+          const firstChannel = channels[0];
+          setSelectedChannel(firstChannel);
+          loadMessages(firstChannel);
+        }
+      } catch (error) {
+        console.error("Sendbird connection error:", error);
+        
+        if (!isComponentMounted) return;
+        
+        // Clear timeout if it exists
+        if (connectionTimeoutId) {
+          clearTimeout(connectionTimeoutId);
+          connectionTimeoutId = null;
+        }
+        
+        let errorMessage = "Failed to connect to chat server.";
+        
+        // More specific error messages based on the error type
+        if (error.code) {
+          switch (error.code) {
+            case 400101:
+              errorMessage = "Invalid user ID format. Please try with a different ID.";
+              break;
+            case 400102:
+              errorMessage = "User ID required. Please enter a valid user ID.";
+              break;
+            case 400201:
+            case 400202:
+              errorMessage = "Authentication failed. Access token is invalid or expired.";
+              break;
+            case 500901:
+              errorMessage = "Connection failed due to a server issue. Please try again later.";
+              break;
+            default:
+              errorMessage = `Connection error (${error.code}): ${error.message || "Unknown error"}`;
+          }
+        } else if (error.message && error.message.includes("Failed to fetch")) {
+          errorMessage = "Network error. Please check your internet connection and try again.";
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        setError(errorMessage);
+        setIsConnected(false);
+        setIsConnecting(false);
+        
+        if (onConnectionError) {
+          onConnectionError(errorMessage);
+        }
+      }
+    };
+    
+    connectToSendbird();
+    
+    // Cleanup function
+    return () => {
+      isComponentMounted = false;
+      
+      if (connectionTimeoutId) {
+        clearTimeout(connectionTimeoutId);
+      }
+      
+      try {
+        // Only disconnect if we're actually connected
+        if (sb.currentUser) {
+          sb.disconnect();
+          console.log("Disconnected from Sendbird");
+        }
+      } catch (e) {
+        console.error("Error disconnecting:", e);
+      }
+    };
+  }, [userId, nickname, onConnectionError]);
 
   // 1) Debug version of getMessageText
   const getMessageText = (msg) => {
@@ -291,89 +369,6 @@ const MessageView = ({ userId, onConnectionError }) => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  // Connect to Sendbird
-  useEffect(() => {
-    let isComponentMounted = true;
-    let connectionTimeoutId = null;
-
-    const connect = async () => {
-      try {
-        // Set a connection timeout to prevent endless "connecting" state
-        connectionTimeoutId = setTimeout(() => {
-          if (isComponentMounted) {
-            console.error("Connection timeout reached");
-            setIsConnected(false);
-            setError("Connection timeout. Please refresh and try again.");
-          }
-        }, 15000); // 15 second timeout
-
-        console.log("Attempting to connect with userId:", userId);
-        
-        // Force a new connection attempt regardless of current state
-        try {
-          // Disconnect first if already connected
-          if (sb.currentUser) {
-            await sb.disconnect();
-            console.log("Disconnected previous session");
-          }
-          
-          // Attempt new connection
-          await sb.connect(userId);
-          console.log("Successfully connected to Sendbird as:", userId);
-          
-          if (isComponentMounted) {
-            setIsConnected(true);
-            setError("");
-            clearTimeout(connectionTimeoutId);
-
-            // Load channels after successful connection
-            const channels = await loadChannels();
-            if (channels && channels.length > 0) {
-              const firstChannel = channels[0];
-              setSelectedChannel(firstChannel);
-              loadMessages(firstChannel);
-            }
-          }
-        } catch (error) {
-          console.error("Direct connection error:", error);
-          if (isComponentMounted) {
-            setIsConnected(false);
-            setError(`Connection failed: ${error.message || "Unknown error"}. Please try again.`);
-            clearTimeout(connectionTimeoutId);
-          }
-        }
-      } catch (error) {
-        console.error("Outer connection error:", error);
-        if (isComponentMounted) {
-          setIsConnected(false);
-          setError(`Connection error: ${error.message || "Unknown error"}`);
-          clearTimeout(connectionTimeoutId);
-        }
-      }
-    };
-    
-    // Start connection process
-    connect();
-
-    // Cleanup function
-    return () => {
-      isComponentMounted = false;
-      if (connectionTimeoutId) {
-        clearTimeout(connectionTimeoutId);
-      }
-      
-      try {
-        // Only disconnect if we're actually connected
-        if (sb.currentUser) {
-          sb.disconnect();
-          console.log("Disconnected from Sendbird");
-        }
-      } catch (e) {
-        console.error("Error disconnecting:", e);
-      }
-    };
-  }, [userId, loadChannels, loadMessages]);
 
   // Channel event handlers
   useEffect(() => {
@@ -484,7 +479,6 @@ const MessageView = ({ userId, onConnectionError }) => {
             await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
           }
         }
-        
         return [];
       };
       
@@ -656,52 +650,51 @@ const MessageView = ({ userId, onConnectionError }) => {
   };
 
   // Helper function to extract timestamp from Sendbird message
-const extractTimestamp = (message) => {
-  if (!message) return null;
-  
-  // Check various properties where timestamp might be stored
-  // Ordered by priority/likelihood
-  
-  // Standard timestamp property
-  if (message.createdAt && !isNaN(message.createdAt)) {
-    return message.createdAt;
-  }
-  
-  // Sendbird v4 might use this
-  if (message.created_at && !isNaN(message.created_at)) {
-    return message.created_at;
-  }
-  
-  // Check for timestamp property
-  if (message.timestamp && !isNaN(message.timestamp)) {
-    return message.timestamp;
-  }
-  
-  // Other possible timestamp properties
-  if (message.sentAt && !isNaN(message.sentAt)) {
-    return message.sentAt;
-  }
-  
-  if (message.messageCreatedAt && !isNaN(message.messageCreatedAt)) {
-    return message.messageCreatedAt;
-  }
-  
-  // Try to extract from message.message if it's a JSON string
-  if (message.data) {
-    try {
-      const data = typeof message.data === 'string' ? JSON.parse(message.data) : message.data;
-      if (data.timestamp && !isNaN(data.timestamp)) {
-        return data.timestamp;
-      }
-    } catch (e) {
-      // Parsing failed, continue with other checks
+  const extractTimestamp = (message) => {
+    if (!message) return null;
+    
+    // Check various properties where timestamp might be stored
+    // Ordered by priority/likelihood
+    
+    // Standard timestamp property
+    if (message.createdAt && !isNaN(message.createdAt)) {
+      return message.createdAt;
     }
-  }
-  
-  // If no timestamp found
-  return null;
-};
-
+    
+    // Sendbird v4 might use this
+    if (message.created_at && !isNaN(message.created_at)) {
+      return message.created_at;
+    }
+    
+    // Check for timestamp property
+    if (message.timestamp && !isNaN(message.timestamp)) {
+      return message.timestamp;
+    }
+    
+    // Other possible timestamp properties
+    if (message.sentAt && !isNaN(message.sentAt)) {
+      return message.sentAt;
+    }
+    
+    if (message.messageCreatedAt && !isNaN(message.messageCreatedAt)) {
+      return message.messageCreatedAt;
+    }
+    
+    // Try to extract from message.message if it's a JSON string
+    if (message.data) {
+      try {
+        const data = typeof message.data === 'string' ? JSON.parse(message.data) : message.data;
+        if (data.timestamp && !isNaN(data.timestamp)) {
+          return data.timestamp;
+        }
+      } catch (e) {
+        // Parsing failed, continue with other checks
+      }
+    }
+    
+    // If no timestamp found
+    return null;
+  };
 
   const retryFailedMessage = (failedMessage) => {
     setNewMessage(failedMessage.message);
@@ -732,60 +725,59 @@ const extractTimestamp = (message) => {
     return groups;
   };
 
-// Enhanced formatMessageTime function with more robust handling
-const formatMessageTime = (timestamp) => {
-  if (!timestamp) return "Unknown time";
-  
-  // Convert string timestamps to numbers
-  if (typeof timestamp === "string") {
-    // Try parsing as integer first
-    let parsedTimestamp = parseInt(timestamp, 10);
+  // Enhanced formatMessageTime function with more robust handling
+  const formatMessageTime = (timestamp) => {
+    if (!timestamp) return "Unknown time";
     
-    // If that fails, try as a date string
-    if (isNaN(parsedTimestamp)) {
-      const dateFromString = new Date(timestamp);
-      if (dateFromString.toString() !== "Invalid Date") {
-        parsedTimestamp = dateFromString.getTime();
+    // Convert string timestamps to numbers
+    if (typeof timestamp === "string") {
+      // Try parsing as integer first
+      let parsedTimestamp = parseInt(timestamp, 10);
+      
+      // If that fails, try as a date string
+      if (isNaN(parsedTimestamp)) {
+        const dateFromString = new Date(timestamp);
+        if (dateFromString.toString() !== "Invalid Date") {
+          parsedTimestamp = dateFromString.getTime();
+        }
       }
+      
+      timestamp = parsedTimestamp;
     }
     
-    timestamp = parsedTimestamp;
-  }
-  
-  // If timestamp is too small, it might be in seconds instead of milliseconds
-  // Typical Unix timestamps after 2001 are > 1000000000000 in milliseconds
-  if (timestamp > 0 && timestamp < 10000000000) {
-    timestamp = timestamp * 1000; // Convert from seconds to milliseconds
-  }
-  
-  if (isNaN(timestamp) || timestamp <= 0) return "Unknown time";
-  
-  try {
-    const messageDate = new Date(timestamp);
-    const today = new Date();
-    
-    if (messageDate.toString() === "Invalid Date") return "Unknown time";
-    
-    const isToday =
-      messageDate.getDate() === today.getDate() &&
-      messageDate.getMonth() === today.getMonth() &&
-      messageDate.getFullYear() === today.getFullYear();
-    
-    if (isToday) {
-      return messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    } else {
-      return (
-        messageDate.toLocaleDateString([], { month: "short", day: "numeric" }) +
-        " " +
-        messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      );
+    // If timestamp is too small, it might be in seconds instead of milliseconds
+    // Typical Unix timestamps after 2001 are > 1000000000000 in milliseconds
+    if (timestamp > 0 && timestamp < 10000000000) {
+      timestamp = timestamp * 1000; // Convert from seconds to milliseconds
     }
-  } catch (error) {
-    console.error("Date formatting error:", error);
-    return "Unknown time";
-  }
-};
-
+    
+    if (isNaN(timestamp) || timestamp <= 0) return "Unknown time";
+    
+    try {
+      const messageDate = new Date(timestamp);
+      const today = new Date();
+      
+      if (messageDate.toString() === "Invalid Date") return "Unknown time";
+      
+      const isToday =
+        messageDate.getDate() === today.getDate() &&
+        messageDate.getMonth() === today.getMonth() &&
+        messageDate.getFullYear() === today.getFullYear();
+      
+      if (isToday) {
+        return messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      } else {
+        return (
+          messageDate.toLocaleDateString([], { month: "short", day: "numeric" }) +
+          " " +
+          messageDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        );
+      }
+    } catch (error) {
+      console.error("Date formatting error:", error);
+      return "Unknown time";
+    }
+  };
 
   const messageGroups = groupMessages(messages);
 
@@ -851,129 +843,140 @@ const formatMessageTime = (timestamp) => {
           </div>
         </div>
 
-        {/* Error message display */}
-      {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 mx-4 mt-4">
-          <span className="block sm:inline">{error}</span>
-          <span 
-            className="absolute top-0 bottom-0 right-0 px-4 py-3 cursor-pointer" 
-            onClick={() => setError("")}
-          >
-            <span className="sr-only">Dismiss</span>
-            <span className="text-red-500">×</span>
-          </span>
-        </div>
-      )}
-      
-      {/* Messages */}
-        <div className="flex-1 p-8 overflow-y-auto space-y-6">
-          {messageGroups.length > 0 ? (
-            messageGroups.map((group, groupIndex) => {
-              const isSentByMe = group[0].sender?.userId === userId;
-              return (
-                <div key={`group-${groupIndex}`} className="mb-6">
-                  <div
-                    className={`flex ${
-                      group[0]._isSystemMessage || group[0]._isLoading
-                        ? "justify-center"
-                        : isSentByMe
-                        ? "justify-end"
-                        : "justify-start"
-                    }`}
-                  >
-                    {!isSentByMe && !group[0]._isSystemMessage && !group[0]._isLoading && (
-                      <div className="w-8 h-8 bg-gray-300 rounded-full self-end mb-1 mr-2"></div>
-                    )}
-                    <div className={`flex flex-col max-w-md ${isSentByMe ? "items-end" : "items-start"}`}>
-                      {group.map((message, messageIndex) => {
-                        const isLastInGroup = messageIndex === group.length - 1;
-                        const isPending = message._isPending;
-                        const isFailed = message._isFailed;
-                        let bubbleStyle = "";
-                        if (message._isSystemMessage) {
-                          bubbleStyle =
-                            "bg-gray-200 text-gray-700 text-center italic rounded-xl mx-auto";
-                        } else if (message._isLoading) {
-                          bubbleStyle =
-                            "bg-gray-200 text-gray-700 text-center italic rounded-xl mx-auto animate-pulse";
-                        } else if (isSentByMe) {
-                          bubbleStyle = "bg-indigo-600 text-white";
-                        } else {
-                          bubbleStyle = "bg-gray-100 text-black";
-                        }
-                        if (isPending) {
-                          bubbleStyle = isSentByMe ? "bg-indigo-400 text-white" : "bg-gray-100 text-black";
-                        } else if (isFailed) {
-                          bubbleStyle = "bg-red-100 text-red-600";
-                        }
-                        if (group.length === 1) {
-                          bubbleStyle += isSentByMe
-                            ? " rounded-2xl rounded-br-none"
-                            : " rounded-2xl rounded-bl-none";
-                        } else if (messageIndex === 0) {
-                          bubbleStyle += isSentByMe
-                            ? " rounded-2xl rounded-br-none rounded-tr-lg"
-                            : " rounded-2xl rounded-bl-none rounded-tl-lg";
-                        } else if (isLastInGroup) {
-                          bubbleStyle += isSentByMe
-                            ? " rounded-2xl rounded-tr-lg rounded-br-none"
-                            : " rounded-2xl rounded-tl-lg rounded-bl-none";
-                        } else {
-                          bubbleStyle += isSentByMe
-                            ? " rounded-2xl rounded-tr-lg rounded-br-none"
-                            : " rounded-2xl rounded-tl-lg rounded-bl-none";
-                        }
+        {/* Connection Status and Errors */}
+        {isConnecting && (
+          <div className="flex flex-1 justify-center items-center">
+            <div className="flex flex-col items-center space-y-4">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+              <p className="text-gray-500">Connecting to chat server...</p>
+            </div>
+          </div>
+        )}
+        
+        {!isConnecting && error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4 mx-4 mt-4">
+            <span className="block sm:inline">{error}</span>
+            <span 
+              className="absolute top-0 bottom-0 right-0 px-4 py-3 cursor-pointer" 
+              onClick={() => setError("")}
+            >
+              <span className="sr-only">Dismiss</span>
+              <span className="text-red-500">×</span>
+            </span>
+          </div>
+        )}
+        
+        {/* Messages */}
+        {!isConnecting && !error && (
+          <div className="flex-1 p-8 overflow-y-auto space-y-6">
+            {messageGroups.length > 0 ? (
+              messageGroups.map((group, groupIndex) => {
+                const isSentByMe = group[0].sender?.userId === userId;
+                return (
+                  <div key={`group-${groupIndex}`} className="mb-6">
+                    <div
+                      className={`flex ${
+                        group[0]._isSystemMessage || group[0]._isLoading
+                          ? "justify-center"
+                          : isSentByMe
+                          ? "justify-end"
+                          : "justify-start"
+                      }`}
+                    >
+                      {!isSentByMe && !group[0]._isSystemMessage && !group[0]._isLoading && (
+                        <div className="w-8 h-8 bg-gray-300 rounded-full self-end mb-1 mr-2"></div>
+                      )}
+                      <div className={`flex flex-col max-w-md ${isSentByMe ? "items-end" : "items-start"}`}>
+                        {group.map((message, messageIndex) => {
+                          const isLastInGroup = messageIndex === group.length - 1;
+                          const isPending = message._isPending;
+                          const isFailed = message._isFailed;
+                          let bubbleStyle = "";
+                          if (message._isSystemMessage) {
+                            bubbleStyle =
+                              "bg-gray-200 text-gray-700 text-center italic rounded-xl mx-auto";
+                          } else if (message._isLoading) {
+                            bubbleStyle =
+                              "bg-gray-200 text-gray-700 text-center italic rounded-xl mx-auto animate-pulse";
+                          } else if (isSentByMe) {
+                            bubbleStyle = "bg-indigo-600 text-white";
+                          } else {
+                            bubbleStyle = "bg-gray-100 text-black";
+                          }
+                          if (isPending) {
+                            bubbleStyle = isSentByMe ? "bg-indigo-400 text-white" : "bg-gray-100 text-black";
+                          } else if (isFailed) {
+                            bubbleStyle = "bg-red-100 text-red-600";
+                          }
+                          if (group.length === 1) {
+                            bubbleStyle += isSentByMe
+                              ? " rounded-2xl rounded-br-none"
+                              : " rounded-2xl rounded-bl-none";
+                          } else if (messageIndex === 0) {
+                            bubbleStyle += isSentByMe
+                              ? " rounded-2xl rounded-br-none rounded-tr-lg"
+                              : " rounded-2xl rounded-bl-none rounded-tl-lg";
+                          } else if (isLastInGroup) {
+                            bubbleStyle += isSentByMe
+                              ? " rounded-2xl rounded-tr-lg rounded-br-none"
+                              : " rounded-2xl rounded-tl-lg rounded-bl-none";
+                          } else {
+                            bubbleStyle += isSentByMe
+                              ? " rounded-2xl rounded-tr-lg rounded-br-none"
+                              : " rounded-2xl rounded-tl-lg rounded-bl-none";
+                          }
 
-                        return (
-                          <div key={message.messageId} className="my-0.5">
-                            <div className={`relative px-4 py-2 text-sm shadow-sm ${bubbleStyle}`}>
-                              <p>{getMessageText(message)}</p>
+                          return (
+                            <div key={message.messageId} className="my-0.5">
+                              <div className={`relative px-4 py-2 text-sm shadow-sm ${bubbleStyle}`}>
+                                <p>{getMessageText(message)}</p>
+                              </div>
+                              {isSentByMe && (
+                                <div className="text-xs text-right mr-2">
+                                  {isFailed && (
+                                    <div className="flex justify-end">
+                                      <span className="text-red-500 mr-2">Failed to send</span>
+                                      <button
+                                        onClick={() => retryFailedMessage(message)}
+                                        className="text-blue-500 hover:underline"
+                                      >
+                                        Retry
+                                      </button>
+                                    </div>
+                                  )}
+                                  {isPending && <span className="text-gray-400">Sending...</span>}
+                                </div>
+                              )}
+                              {isLastInGroup && (
+                                <div
+                                  className={`text-xs text-gray-500 mt-1 ${
+                                    isSentByMe ? "text-right mr-2" : "text-left ml-2"
+                                  }`}
+                                >
+                                  {typeof message.createdAt !== "undefined"
+                                    ? formatMessageTime(message.createdAt)
+                                    : "Unknown time"}
+                                </div>
+                              )}
                             </div>
-                            {isSentByMe && (
-                              <div className="text-xs text-right mr-2">
-                                {isFailed && (
-                                  <div className="flex justify-end">
-                                    <span className="text-red-500 mr-2">Failed to send</span>
-                                    <button
-                                      onClick={() => retryFailedMessage(message)}
-                                      className="text-blue-500 hover:underline"
-                                    >
-                                      Retry
-                                    </button>
-                                  </div>
-                                )}
-                                {isPending && <span className="text-gray-400">Sending...</span>}
-                              </div>
-                            )}
-                            {isLastInGroup && (
-                              <div
-                                className={`text-xs text-gray-500 mt-1 ${
-                                  isSentByMe ? "text-right mr-2" : "text-left ml-2"
-                                }`}
-                              >
-                                {typeof message.createdAt !== "undefined"
-                                  ? formatMessageTime(message.createdAt)
-                                  : "Unknown time"}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
+                      {isSentByMe && !group[0]._isSystemMessage && !group[0]._isLoading && (
+                        <div className="w-8 h-8 bg-gray-300 rounded-full self-end mb-1 ml-2"></div>
+                      )}
                     </div>
-                    {isSentByMe && !group[0]._isSystemMessage && !group[0]._isLoading && (
-                      <div className="w-8 h-8 bg-gray-300 rounded-full self-end mb-1 ml-2"></div>
-                    )}
                   </div>
-                </div>
-              );
-            })
-          ) : (
-            <p className="text-gray-400 text-center">No messages yet.</p>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+                );
+              })
+            ) : (
+              <p className="text-gray-400 text-center">No messages yet.</p>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
 
-        {selectedChannel && (
+        {!isConnecting && selectedChannel && (
           <div className="p-4 bg-white border-t flex items-center">
             <input
               type="text"
@@ -1004,34 +1007,36 @@ const formatMessageTime = (timestamp) => {
 const App = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userId, setUserId] = useState("");
+  const [nickname, setNickname] = useState("");
   const [connectionError, setConnectionError] = useState("");
 
-  // Check for existing connection
+  // Check for existing connection and handle reconnection
   useEffect(() => {
-    const checkExistingConnection = async () => {
-      if (sb.currentUser) {
-        try {
-          // If already connected, just use that connection
+    const checkConnectionStatus = async () => {
+      try {
+        // In older SDK versions, we need to check currentUser
+        if (sb.currentUser) {
           console.log("Found existing connection as:", sb.currentUser.userId);
           setUserId(sb.currentUser.userId);
           setIsLoggedIn(true);
-        } catch (error) {
-          console.error("Error checking existing connection:", error);
-          // Force disconnect any problematic connection
-          try {
-            await sb.disconnect();
-          } catch (e) {
-            console.warn("Error disconnecting problematic connection:", e);
-          }
+        }
+      } catch (error) {
+        console.error("Error checking connection status:", error);
+        // Force disconnect any problematic connection
+        try {
+          await sb.disconnect();
+        } catch (e) {
+          console.warn("Error disconnecting problematic connection:", e);
         }
       }
     };
-
-    checkExistingConnection();
+    
+    checkConnectionStatus();
   }, []);
 
-  const handleLoginSuccess = (userId) => {
+  const handleLoginSuccess = (userId, nickname = "") => {
     setUserId(userId);
+    setNickname(nickname);
     setIsLoggedIn(true);
     setConnectionError("");
   };
@@ -1052,7 +1057,8 @@ const App = () => {
     <div>
       {isLoggedIn ? (
         <MessageView 
-          userId={userId} 
+          userId={userId}
+          nickname={nickname}
           onConnectionError={handleConnectionError} 
         />
       ) : (
