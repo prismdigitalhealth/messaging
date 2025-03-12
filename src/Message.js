@@ -9,6 +9,9 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(true);
   const [error, setError] = useState("");
+  const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
+  const [userIdsToInvite, setUserIdsToInvite] = useState("");
   const messagesEndRef = useRef(null);
   
   // Forward connection errors to parent component
@@ -292,6 +295,79 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
       }
     };
   }, [selectedChannel, isConnected]);
+
+  // Create a new group channel
+  const createNewChannel = async () => {
+    try {
+      if (!newChannelName.trim()) {
+        return;
+      }
+      
+      // Parse user IDs to invite (excluding the current user)
+      const userIdsToAdd = userIdsToInvite
+        .split(',')
+        .map(id => id.trim())
+        .filter(id => id !== "" && id !== userId);
+      
+      console.log("Users to invite:", userIdsToAdd);
+      
+      // Channel creation params
+      const params = {
+        name: newChannelName.trim(),
+        channelUrl: `group-${Date.now()}`,
+        coverUrl: "", // Optional channel image
+        isDistinct: false, // Allow multiple channels with same members
+        operatorUserIds: [userId], // Current user as operator
+        userIds: [userId], // Start with current user
+      };
+      
+      // Create the channel
+      const groupChannel = await sb.groupChannel.createChannel(params);
+      console.log("Channel created:", groupChannel);
+      
+      // Invite additional users if specified
+      if (userIdsToAdd.length > 0) {
+        try {
+          // The Sendbird SDK expects an array of UserIds for the invite method
+          // According to Sendbird documentation, we need to pass an array of user IDs
+          console.log("Attempting to invite users:", userIdsToAdd);
+          
+          // Convert to an array of objects with userId property if necessary
+          // Some versions of Sendbird SDK expect this format instead of simple strings
+          const inviteParams = {
+            userIds: userIdsToAdd,
+            // Add any additional parameters needed for invitations
+          };
+          
+          await groupChannel.inviteWithUserIds(userIdsToAdd);
+          console.log("Users invited successfully:", userIdsToAdd);
+        } catch (inviteError) {
+          console.error("Error inviting users:", inviteError);
+          setError(`Channel created but failed to invite users: ${inviteError.message || "Invalid parameters."}`);
+          // Continue anyway since the channel is created
+        }
+      }
+      
+      // Reset form and close modal
+      setNewChannelName("");
+      setUserIdsToInvite("");
+      setIsCreatingChannel(false);
+      
+      // Update channel list and select the new channel
+      const updatedChannels = await loadChannels();
+      
+      // Find the newly created channel in the updated list
+      const newChannel = updatedChannels.find(ch => ch.url === groupChannel.url);
+      if (newChannel) {
+        setSelectedChannel(newChannel);
+        loadMessages(newChannel);
+      }
+      
+    } catch (error) {
+      console.error("Error creating channel:", error);
+      setError(`Failed to create channel: ${error.message || "Unknown error"}`);
+    }
+  };
 
   const loadChannels = async () => {
     try {
@@ -648,11 +724,81 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar - Channel List */}
       <div className="w-1/4 bg-gray-100 shadow-md flex flex-col p-4">
-        <h2 className="text-2xl font-bold mb-4">Chats</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold">Chats</h2>
+          <button
+            onClick={() => setIsCreatingChannel(true)}
+            className="bg-indigo-600 text-white p-2 rounded-full hover:bg-indigo-700 focus:outline-none"
+            disabled={!isConnected}
+            title={isConnected ? "Create New Channel" : "Connect to create channels"}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
         <div className={`text-xs mb-2 flex items-center ${isConnected ? "text-green-600" : "text-red-600"}`}>
           <div className={`w-2 h-2 rounded-full mr-1 ${isConnected ? "bg-green-600" : "bg-red-600"}`}></div>
           {isConnected ? "Connected" : "Disconnected"}
         </div>
+        
+        {/* Create Channel Modal */}
+        {isCreatingChannel && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md">
+              <h3 className="text-xl font-bold mb-4">Create New Channel</h3>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Channel Name *
+                </label>
+                <input
+                  type="text"
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder="Enter channel name"
+                />
+              </div>
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  User IDs to Invite (comma separated)
+                </label>
+                <input
+                  type="text"
+                  value={userIdsToInvite}
+                  onChange={(e) => setUserIdsToInvite(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder="e.g. user1, user2, user3"
+                />
+                <p className="text-xs text-gray-500 mt-1">Leave empty to create a channel just for yourself</p>
+              </div>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setIsCreatingChannel(false);
+                    setNewChannelName("");
+                    setUserIdsToInvite("");
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={createNewChannel}
+                  disabled={!newChannelName.trim()}
+                  className={`px-4 py-2 rounded-lg ${
+                    newChannelName.trim() 
+                      ? "bg-indigo-600 text-white hover:bg-indigo-700" 
+                      : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                  }`}
+                >
+                  Create Channel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div className="flex-1 overflow-y-auto space-y-3">
           {channels.length > 0 ? (
             channels.map((ch) => {
@@ -849,7 +995,7 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
               onKeyDown={(e) => {
                 if (e.key === "Enter") sendMessage();
               }}
-              className="flex-1 border p-2 rounded-full bg-gray-100 text-black"
+              className="flex-1 p-2 focus:outline-none text-black"
             />
             <button
               onClick={sendMessage}
