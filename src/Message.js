@@ -1,6 +1,9 @@
 import "tailwindcss/tailwind.css";
 import React, { useEffect, useState, useRef } from "react";
 
+// Simple local storage for reactions
+const localReactions = {};
+
 const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
   const [channels, setChannels] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState(null);
@@ -12,6 +15,8 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [userIdsToInvite, setUserIdsToInvite] = useState("");
+  const [showEmojiPicker, setShowEmojiPicker] = useState(null); // Stores messageId for which emoji picker is shown
+  const [messageReactions, setMessageReactions] = useState({});
   const messagesEndRef = useRef(null);
   
   // Forward connection errors to parent component
@@ -235,6 +240,75 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+  
+  // Common emoji options
+  const commonEmojis = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+  
+  // Initialize reactions when component mounts
+  useEffect(() => {
+    // Load any saved reactions from localStorage
+    try {
+      const savedReactions = localStorage.getItem('messageReactions');
+      if (savedReactions) {
+        setMessageReactions(JSON.parse(savedReactions));
+      }
+    } catch (error) {
+      console.error('Error loading saved reactions:', error);
+    }
+  }, []);
+  
+  // Save reactions to localStorage when they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('messageReactions', JSON.stringify(messageReactions));
+    } catch (error) {
+      console.error('Error saving reactions:', error);
+    }
+  }, [messageReactions]);
+  
+  // Add or remove a reaction
+  const addReaction = (messageId, emoji) => {
+    setMessageReactions(prevReactions => {
+      // Create a deep copy of the current reactions
+      const newReactions = JSON.parse(JSON.stringify(prevReactions));
+      
+      // Initialize message reactions if not present
+      if (!newReactions[messageId]) {
+        newReactions[messageId] = {};
+      }
+      
+      // Initialize emoji reactions if not present
+      if (!newReactions[messageId][emoji]) {
+        newReactions[messageId][emoji] = [];
+      }
+      
+      // Check if user already reacted
+      const userIndex = newReactions[messageId][emoji].indexOf(userId);
+      
+      if (userIndex > -1) {
+        // Remove user's reaction
+        newReactions[messageId][emoji].splice(userIndex, 1);
+        
+        // Remove emoji if no users left
+        if (newReactions[messageId][emoji].length === 0) {
+          delete newReactions[messageId][emoji];
+        }
+        
+        // Remove message entry if no reactions left
+        if (Object.keys(newReactions[messageId]).length === 0) {
+          delete newReactions[messageId];
+        }
+      } else {
+        // Add user's reaction
+        newReactions[messageId][emoji].push(userId);
+      }
+      
+      return newReactions;
+    });
+    
+    // Close emoji picker after selecting
+    setShowEmojiPicker(null);
+  };
 
   // Channel event handlers
   useEffect(() => {
@@ -242,6 +316,7 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
 
     const onMessageReceived = (channel, message) => {
       if (selectedChannel.url === channel.url) {
+        // No need to add reactions property to messages anymore
         setMessages((prevMessages) => [...prevMessages, message]);
       }
       setChannels((prevChannels) =>
@@ -253,9 +328,14 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
 
     const onMessageUpdated = (channel, message) => {
       if (selectedChannel.url === channel.url) {
+        // Ensure reactions property is preserved
+        const updatedMessage = {
+          ...message,
+          reactions: message.reactions || {}
+        };
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
-            msg.messageId === message.messageId ? message : msg
+            msg.messageId === message.messageId ? updatedMessage : msg
           )
         );
       }
@@ -423,7 +503,7 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
       
       const sortedChannels = await fetchChannelsWithRetry(3);
       setChannels(sortedChannels);
-      return sortedChannels;
+      return sortedChannels; 
     } catch (error) {
       console.error("Channel list outer error:", error);
       return [];
@@ -511,8 +591,10 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
           createdAt: Date.now(),
           sender: { userId: "system" },
           _isSystemMessage: true,
+          reactions: {}
         }]);
       } else {
+        // No need to add reactions property to messages anymore
         setMessages(fetchedMessages);
       }
     } catch (error) {
@@ -550,8 +632,11 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
     try {
       const params = { 
         message: messageText,
-        // Adding data as a fallback to ensure the message text is preserved
-        data: JSON.stringify({ text: messageText })
+        // Adding data with empty reactions object to ensure reactions can be added later
+        data: JSON.stringify({ 
+          text: messageText,
+          reactions: {}
+        })
       };
       
       const sentMessage = await selectedChannel.sendUserMessage(params);
@@ -839,7 +924,7 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
       </div>
 
       {/* Chat Area */}
-      <div className="w-3/4 flex flex-col h-full bg-white">
+      <div className="w-2/4 flex flex-col h-full bg-white">
         <div className="p-4 bg-white border-b flex items-center">
           <div className="w-12 h-12 bg-gray-300 rounded-full mr-3"></div>
           <div>
@@ -937,8 +1022,51 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
 
                           return (
                             <div key={message.messageId} className="my-0.5">
-                              <div className={`relative px-4 py-2 text-sm shadow-sm ${bubbleStyle}`}>
+                              <div className={`relative px-4 py-2 text-sm shadow-sm ${bubbleStyle} group`}>
                                 <p>{getMessageText(message)}</p>
+                                
+                                {/* Emoji reaction button */}
+                                {!message._isSystemMessage && !message._isLoading && (
+                                  <button 
+                                    onClick={() => setShowEmojiPicker(showEmojiPicker === message.messageId ? null : message.messageId)}
+                                    className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full shadow-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-100"
+                                  >
+                                    <span className="text-xs">😀</span>
+                                  </button>
+                                )}
+                                
+                                {/* Emoji picker */}
+                                {showEmojiPicker === message.messageId && (
+                                  <div className="absolute top-0 right-0 transform -translate-y-full mt-2 bg-white rounded-lg shadow-lg p-2 z-10">
+                                    <div className="flex space-x-2">
+                                      {commonEmojis.map(emoji => (
+                                        <button 
+                                          key={emoji} 
+                                          onClick={() => addReaction(message.messageId, emoji)}
+                                          className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-full"
+                                        >
+                                          {emoji}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {/* Display reactions */}
+                                {messageReactions[message.messageId] && Object.keys(messageReactions[message.messageId]).length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {Object.entries(messageReactions[message.messageId]).map(([emoji, users]) => (
+                                      <button
+                                        key={emoji}
+                                        onClick={() => addReaction(message.messageId, emoji)}
+                                        className={`flex items-center space-x-1 bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-0.5 ${users.includes(userId) ? 'ring-1 ring-indigo-400' : ''}`}
+                                      >
+                                        <span>{emoji}</span>
+                                        <span className="text-xs">{users.length}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                               {isSentByMe && (
                                 <div className="text-xs text-right mr-2">
@@ -986,16 +1114,25 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
         )}
 
         {!isConnecting && selectedChannel && (
-          <div className="p-4 bg-white border-t flex items-center">
-            <input
-              type="text"
+          <div className="p-4 bg-white border-t flex items-start">
+            <textarea
               placeholder="Write your message..."
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") sendMessage();
+              onChange={(e) => {
+                setNewMessage(e.target.value);
+                // Auto-resize the textarea
+                e.target.style.height = 'auto';
+                e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
               }}
-              className="flex-1 p-2 focus:outline-none text-black"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              className="flex-1 p-2 focus:outline-none text-black resize-none overflow-hidden min-h-[40px] max-h-[150px]"
+              rows="1"
+              style={{ height: 'auto' }}
             />
             <button
               onClick={sendMessage}
@@ -1008,6 +1145,11 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
             </button>
           </div>
         )}
+      </div>
+
+      {/* Right Side Panel */}
+      <div className="w-1/4 bg-gray-50 border-l border-gray-200 flex flex-col">
+        {/* Empty right side panel content */}
       </div>
     </div>
   );
