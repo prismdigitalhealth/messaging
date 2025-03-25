@@ -1,8 +1,7 @@
 import "tailwindcss/tailwind.css";
 import React, { useEffect, useState, useRef } from "react";
 
-// Simple local storage for reactions
-const localReactions = {};
+// Chat application with message reactions
 
 const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
   const [channels, setChannels] = useState([]);
@@ -15,10 +14,20 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [userIdsToInvite, setUserIdsToInvite] = useState("");
-  const [showEmojiPicker, setShowEmojiPicker] = useState(null); // Stores messageId for which emoji picker is shown
-  const [messageReactions, setMessageReactions] = useState({});
+  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [previousMessageQuery, setPreviousMessageQuery] = useState(null);
+
   const messagesEndRef = useRef(null);
-  
+  const messagesContainerRef = useRef(null);
+  const textareaRef = useRef(null);
+  // Placeholder state variables to prevent undefined errors
+  const [messageReactions, setMessageReactions] = useState({});
+  const [selectedMessageForReaction, setSelectedMessageForReaction] = useState(null);
+  const [availableEmojis, setAvailableEmojis] = useState([]);
+  const [channelUnreadCounts, setChannelUnreadCounts] = useState({});
+  const defaultEmojis = ['👍', '❤️', '😂', '😮', '😢', '👎'];
+
   // Forward connection errors to parent component
   useEffect(() => {
     if (error && error.includes("Connection")) {
@@ -241,73 +250,129 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
   
-  // Common emoji options
-  const commonEmojis = ['👍', '❤️', '😂', '😮', '😢', '😡'];
-  
-  // Initialize reactions when component mounts
-  useEffect(() => {
-    // Load any saved reactions from localStorage
-    try {
-      const savedReactions = localStorage.getItem('messageReactions');
-      if (savedReactions) {
-        setMessageReactions(JSON.parse(savedReactions));
-      }
-    } catch (error) {
-      console.error('Error loading saved reactions:', error);
-    }
-  }, []);
-  
-  // Save reactions to localStorage when they change
-  useEffect(() => {
-    try {
-      localStorage.setItem('messageReactions', JSON.stringify(messageReactions));
-    } catch (error) {
-      console.error('Error saving reactions:', error);
-    }
-  }, [messageReactions]);
-  
-  // Add or remove a reaction
-  const addReaction = (messageId, emoji) => {
-    setMessageReactions(prevReactions => {
-      // Create a deep copy of the current reactions
-      const newReactions = JSON.parse(JSON.stringify(prevReactions));
-      
-      // Initialize message reactions if not present
-      if (!newReactions[messageId]) {
-        newReactions[messageId] = {};
-      }
-      
-      // Initialize emoji reactions if not present
-      if (!newReactions[messageId][emoji]) {
-        newReactions[messageId][emoji] = [];
-      }
-      
-      // Check if user already reacted
-      const userIndex = newReactions[messageId][emoji].indexOf(userId);
-      
-      if (userIndex > -1) {
-        // Remove user's reaction
-        newReactions[messageId][emoji].splice(userIndex, 1);
-        
-        // Remove emoji if no users left
-        if (newReactions[messageId][emoji].length === 0) {
-          delete newReactions[messageId][emoji];
-        }
-        
-        // Remove message entry if no reactions left
-        if (Object.keys(newReactions[messageId]).length === 0) {
-          delete newReactions[messageId];
-        }
-      } else {
-        // Add user's reaction
-        newReactions[messageId][emoji].push(userId);
-      }
-      
-      return newReactions;
-    });
+  // Auto-resize textarea when content changes
+  const autoResizeTextarea = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
     
-    // Close emoji picker after selecting
-    setShowEmojiPicker(null);
+    // Reset height to auto to get the correct scrollHeight
+    textarea.style.height = 'auto';
+    
+    // Set height based on content with min/max constraints
+    const newHeight = Math.max(
+      40, // min height (single line)
+      Math.min(textarea.scrollHeight, 150) // max height 150px
+    );
+    textarea.style.height = `${newHeight}px`;
+  };
+  
+  // Apply auto-resize when message content changes
+  useEffect(() => {
+    autoResizeTextarea();
+  }, [newMessage]);
+  
+  // Initialize textarea height when component mounts or channel changes
+  useEffect(() => {
+    // Small delay to ensure the DOM is fully rendered
+    const timer = setTimeout(() => {
+      autoResizeTextarea();
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [selectedChannel]);
+  
+  // Emoji functionality removed to simplify codebase
+  
+  // Emoji functionality removed to simplify codebase
+  
+  // Emoji reactions functionality
+  
+  // Emoji functionality has been removed
+  
+  // Toggle reaction on a message
+  const toggleReaction = async (messageId, emoji) => {
+    if (!selectedChannel || !sb || !messageId || !emoji) {
+      console.error('Cannot toggle reaction: missing required parameters');
+      return;
+    }
+    
+    try {
+      // Get the message object from the channel
+      const message = await selectedChannel.getMessage(messageId);
+      if (!message) {
+        console.error(`Message not found: ${messageId}`);
+        return;
+      }
+      
+      // Check if the current user has already reacted with this emoji
+      let hasReacted = false;
+      
+      // Check if we have reactions for this message in our state
+      if (messageReactions[messageId] && messageReactions[messageId][emoji]) {
+        hasReacted = messageReactions[messageId][emoji].includes(userId);
+      }
+      
+      console.log(`User ${userId} has ${hasReacted ? 'already' : 'not'} reacted with ${emoji} to message ${messageId}`);
+      
+      // Toggle the reaction using Sendbird API
+      if (hasReacted) {
+        // Remove the reaction
+        await selectedChannel.deleteReaction(message, emoji);
+        console.log(`Removed reaction ${emoji} from message ${messageId}`);
+        
+        // Update local state
+        setMessageReactions(prev => {
+          const updatedReactions = {...prev};
+          
+          if (updatedReactions[messageId] && updatedReactions[messageId][emoji]) {
+            // Filter out the current user from the users who reacted with this emoji
+            updatedReactions[messageId][emoji] = updatedReactions[messageId][emoji].filter(id => id !== userId);
+            
+            // If no users left for this emoji, remove the emoji
+            if (updatedReactions[messageId][emoji].length === 0) {
+              delete updatedReactions[messageId][emoji];
+            }
+            
+            // If no emojis left for this message, remove the message
+            if (Object.keys(updatedReactions[messageId]).length === 0) {
+              delete updatedReactions[messageId];
+            }
+          }
+          
+          return updatedReactions;
+        });
+      } else {
+        // Add the reaction
+        await selectedChannel.addReaction(message, emoji);
+        console.log(`Added reaction ${emoji} to message ${messageId}`);
+        
+        // Update local state
+        setMessageReactions(prev => {
+          const updatedReactions = {...prev};
+          
+          // Initialize the message reactions if needed
+          if (!updatedReactions[messageId]) {
+            updatedReactions[messageId] = {};
+          }
+          
+          // Initialize the emoji reactions if needed
+          if (!updatedReactions[messageId][emoji]) {
+            updatedReactions[messageId][emoji] = [];
+          }
+          
+          // Add the current user to the users who reacted with this emoji
+          if (!updatedReactions[messageId][emoji].includes(userId)) {
+            updatedReactions[messageId][emoji] = [...updatedReactions[messageId][emoji], userId];
+          }
+          
+          return updatedReactions;
+        });
+      }
+    } catch (error) {
+      console.error(`Error toggling reaction for message ${messageId}:`, error);
+    } finally {
+      // Close the reaction selector
+      setSelectedMessageForReaction(null);
+    }
   };
 
   // Channel event handlers
@@ -315,29 +380,96 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
     if (!selectedChannel || !isConnected) return;
 
     const onMessageReceived = (channel, message) => {
-      if (selectedChannel.url === channel.url) {
-        // No need to add reactions property to messages anymore
-        setMessages((prevMessages) => [...prevMessages, message]);
+      // Update unread count if message is in a different channel and not from the current user
+      if (channel.url !== selectedChannel?.url && message.sender?.userId !== userId) {
+        setChannelUnreadCounts(prev => ({
+          ...prev,
+          [channel.url]: (prev[channel.url] || 0) + 1
+        }));
       }
-      setChannels((prevChannels) =>
-        prevChannels.map((ch) =>
+      
+      if (selectedChannel?.url === channel.url) {
+        // Emoji functionality removed to simplify codebase
+        
+        // Add the message to the messages state
+        const cleanMessage = {
+          ...message
+        };
+        setMessages((prevMessages) => [...prevMessages, cleanMessage]);
+        
+        // Save received message to localStorage
+        try {
+          const channelMessagesKey = `messages_${channel.url}`;
+          let savedMessages = [];
+          
+          const savedMessagesJson = localStorage.getItem(channelMessagesKey);
+          if (savedMessagesJson) {
+            savedMessages = JSON.parse(savedMessagesJson);
+          }
+          
+          // Check if message already exists
+          const messageExists = savedMessages.some(msg => msg.messageId === message.messageId);
+          if (!messageExists) {
+            savedMessages.push(message);
+            
+            // Sort messages by timestamp
+            savedMessages.sort((a, b) => {
+              const aTime = a.createdAt || 0;
+              const bTime = b.createdAt || 0;
+              return aTime - bTime;
+            });
+            
+            localStorage.setItem(channelMessagesKey, JSON.stringify(savedMessages));
+          }
+        } catch (saveError) {
+          console.error("Error saving received message to localStorage:", saveError);
+        }
+      }
+      
+      // Update channels and ensure they are sorted by most recent activity
+      setChannels((prevChannels) => {
+        const updatedChannels = prevChannels.map((ch) =>
           ch.url === channel.url ? { ...ch, lastMessage: message } : ch
         )
-      );
+        // Re-sort channels by most recent message or creation date
+        .sort((a, b) => {
+          const aTimestamp = a.lastMessage?.createdAt || a.createdAt || 0;
+          const bTimestamp = b.lastMessage?.createdAt || b.createdAt || 0;
+          return bTimestamp - aTimestamp; // Descending order (newest first)
+        });
+        
+        return updatedChannels;
+      });
     };
 
     const onMessageUpdated = (channel, message) => {
       if (selectedChannel.url === channel.url) {
-        // Ensure reactions property is preserved
-        const updatedMessage = {
-          ...message,
-          reactions: message.reactions || {}
-        };
+        // Emoji functionality removed to simplify codebase
+        
+        // Update the message in the messages state
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
-            msg.messageId === message.messageId ? updatedMessage : msg
+            msg.messageId === message.messageId ? message : msg
           )
         );
+        
+        // Also update the message in localStorage
+        try {
+          const channelMessagesKey = `messages_${channel.url}`;
+          const savedMessagesJson = localStorage.getItem(channelMessagesKey);
+          
+          if (savedMessagesJson) {
+            const savedMessages = JSON.parse(savedMessagesJson);
+            const messageIndex = savedMessages.findIndex(msg => msg.messageId === message.messageId);
+            
+            if (messageIndex !== -1) {
+              savedMessages[messageIndex] = message;
+              localStorage.setItem(channelMessagesKey, JSON.stringify(savedMessages));
+            }
+          }
+        } catch (error) {
+          console.error('Error updating message in localStorage:', error);
+        }
       }
     };
 
@@ -479,11 +611,19 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
               continue;
             }
             
+            // Get unread message counts and sort by latest activity
             const sortedChannels = fetchedChannels.sort((a, b) => {
               const aTimestamp = a.lastMessage?.createdAt || a.createdAt || 0;
               const bTimestamp = b.lastMessage?.createdAt || b.createdAt || 0;
               return bTimestamp - aTimestamp;
             });
+            
+            // Update unread counts state
+            const unreadCountsMap = {};
+            sortedChannels.forEach(channel => {
+              unreadCountsMap[channel.url] = channel.unreadMessageCount || 0;
+            });
+            setChannelUnreadCounts(unreadCountsMap);
             
             return sortedChannels;
           } catch (error) {
@@ -558,6 +698,22 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
       
       const channel = await attemptJoinChannel(3);
       setSelectedChannel(channel);
+      
+      // Reset unread count for this channel
+      setChannelUnreadCounts(prev => ({
+        ...prev,
+        [channel.url]: 0
+      }));
+      
+      // Mark the channel as read in Sendbird
+      try {
+        if (channel.markAsRead) {
+          await channel.markAsRead();
+        }
+      } catch (markAsReadError) {
+        console.error("Error marking channel as read:", markAsReadError);
+      }
+      
       loadMessages(channel);
     } catch (error) {
       console.error("Channel join outer error:", error);
@@ -565,12 +721,84 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
     }
   };
 
+  /**
+   * Load more messages when scrolling to top
+   */
+  const loadMoreMessages = async () => {
+    if (!selectedChannel || isLoadingMoreMessages || !hasMoreMessages || !previousMessageQuery) {
+      return;
+    }
+    
+    try {
+      setIsLoadingMoreMessages(true);
+      
+      // Store current scroll height to maintain position after loading
+      const container = messagesContainerRef.current;
+      const oldScrollHeight = container ? container.scrollHeight : 0;
+      
+      // Load previous messages
+      const oldMessages = await previousMessageQuery.load();
+      
+      if (oldMessages && oldMessages.length > 0) {
+        console.log(`Loaded ${oldMessages.length} more older messages`);
+        
+        // Prepend old messages to the beginning of the current messages list
+        setMessages(prevMessages => [
+          ...oldMessages,
+          ...prevMessages
+        ]);
+        
+        // If fewer messages returned than the limit, there are no more messages
+        if (oldMessages.length < previousMessageQuery.limit) {
+          setHasMoreMessages(false);
+        }
+        
+        // Restore scroll position after new messages are rendered
+        setTimeout(() => {
+          if (container) {
+            const newScrollHeight = container.scrollHeight;
+            const scrollDiff = newScrollHeight - oldScrollHeight;
+            container.scrollTop = scrollDiff > 0 ? scrollDiff : 0;
+          }
+        }, 100);
+      } else {
+        // No more messages to load
+        setHasMoreMessages(false);
+      }
+    } catch (error) {
+      console.error("Error loading more messages:", error);
+    } finally {
+      setIsLoadingMoreMessages(false);
+    }
+  };
+
+  /**
+   * Load messages from a channel
+   */
   const loadMessages = async (channel) => {
     if (!channel) return;
     setMessages([
       { _isLoading: true, messageId: "loading-indicator", message: "Loading messages..." },
     ]);
     try {
+      // Reset message loading state
+      setHasMoreMessages(true);
+      setIsLoadingMoreMessages(false);
+      
+      // First, try to load messages from localStorage
+      let localMessages = [];
+      try {
+        const channelMessagesKey = `messages_${channel.url}`;
+        const savedMessagesJson = localStorage.getItem(channelMessagesKey);
+        if (savedMessagesJson) {
+          localMessages = JSON.parse(savedMessagesJson);
+          console.log(`Loaded ${localMessages.length} messages from localStorage for channel ${channel.url}`);
+        }
+      } catch (localStorageError) {
+        console.error("Error loading messages from localStorage:", localStorageError);
+      }
+      
+      // Then, fetch messages from Sendbird API
       if (channel.isSuper && typeof channel.enter === "function") {
         try {
           await channel.enter();
@@ -583,19 +811,52 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
       if ("reverse" in messageListQuery) {
         messageListQuery.reverse = true;
       }
+      // Store the query for loading more messages later
+      setPreviousMessageQuery(messageListQuery);
       const fetchedMessages = await messageListQuery.load();
-      if (fetchedMessages.length === 0) {
+      
+      // Merge messages from localStorage and Sendbird API
+      let mergedMessages = [...fetchedMessages];
+      
+      // Add local messages that aren't in the fetched messages
+      if (localMessages.length > 0) {
+        localMessages.forEach(localMsg => {
+          const exists = mergedMessages.some(fetchedMsg => fetchedMsg.messageId === localMsg.messageId);
+          if (!exists) {
+            mergedMessages.push(localMsg);
+          }
+        });
+        
+        // Sort merged messages by timestamp
+        mergedMessages.sort((a, b) => {
+          const aTime = a.createdAt || 0;
+          const bTime = b.createdAt || 0;
+          return aTime - bTime;
+        });
+      }
+      
+      // Update localStorage with merged messages
+      try {
+        const channelMessagesKey = `messages_${channel.url}`;
+        localStorage.setItem(channelMessagesKey, JSON.stringify(mergedMessages));
+      } catch (saveError) {
+        console.error("Error saving merged messages to localStorage:", saveError);
+      }
+      
+      // All emoji functionality has been completely removed
+      
+      if (mergedMessages.length === 0) {
         setMessages([{
           messageId: "welcome-msg",
           message: `Welcome to ${channel.name || "this channel"}! Send your first message to start the conversation.`,
           createdAt: Date.now(),
           sender: { userId: "system" },
-          _isSystemMessage: true,
-          reactions: {}
+          _isSystemMessage: true
+          // Process message
         }]);
       } else {
-        // No need to add reactions property to messages anymore
-        setMessages(fetchedMessages);
+        // Set messages
+        setMessages(mergedMessages);
       }
     } catch (error) {
       console.error("Message load error:", error);
@@ -604,11 +865,14 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
         message: `Failed to load messages: ${error.message}`,
         createdAt: Date.now(),
         sender: { userId: "system" },
-        _isSystemMessage: true,
+        _isSystemMessage: true
       }]);
     }
   };
 
+  /**
+   * Send a message to the selected channel and ensure it's saved
+   */
   const sendMessage = async () => {
     if (!selectedChannel || newMessage.trim() === "") return;
     
@@ -616,9 +880,9 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
     const messageText = newMessage.trim();
     const currentTimestamp = Date.now();
     
-    // Create a pending message
+    // Create a pending message to show immediately in the UI
     const pendingMessage = {
-      messageId: currentTimestamp.toString(),
+      messageId: `pending_${currentTimestamp}`,
       message: messageText,
       sender: { userId },
       createdAt: currentTimestamp,
@@ -626,21 +890,29 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
       messageType: "user",
     };
     
-    setMessages((prevMessages) => [...prevMessages, pendingMessage]);
+    // Emoji functionality removed to simplify codebase
+    
+    // Add pending message to the UI
+    const cleanPendingMessage = {
+      ...pendingMessage
+    };
+    setMessages((prevMessages) => [...prevMessages, cleanPendingMessage]);
     setNewMessage("");
     
     try {
+      // Prepare message parameters with metadata
       const params = { 
         message: messageText,
-        // Adding data with empty reactions object to ensure reactions can be added later
         data: JSON.stringify({ 
-          text: messageText,
-          reactions: {}
+          text: messageText
         })
       };
       
+      // Send the message to Sendbird
       const sentMessage = await selectedChannel.sendUserMessage(params);
       console.log("Sent message response:", sentMessage);
+      
+      // Emoji functionality removed to simplify codebase
       
       // Extract the timestamp from Sendbird response, with fallbacks
       const sendBirdTimestamp = extractTimestamp(sentMessage);
@@ -653,21 +925,83 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
         // Keep the sender information
         sender: sentMessage.sender || { userId },
         // Use Sendbird timestamp if available, otherwise fall back to our local timestamp
-        createdAt: sendBirdTimestamp || currentTimestamp
+        createdAt: sendBirdTimestamp || currentTimestamp,
+        // Add the data field if it's not already there
+        data: sentMessage.data || JSON.stringify({
+          text: messageText
+        })
+      };
+      
+      // Replace the pending message with the actual sent message
+      const cleanProcessedMessage = {
+        ...processedSentMessage
       };
       
       setMessages((prevMessages) =>
         prevMessages.map((msg) =>
           msg._isPending && msg.messageId === pendingMessage.messageId ? 
-            processedSentMessage : msg
+            cleanProcessedMessage : msg
         )
       );
+      
+      // Save sent message to localStorage
+      try {
+        const channelMessagesKey = `messages_${selectedChannel.url}`;
+        let savedMessages = [];
+        
+        const savedMessagesJson = localStorage.getItem(channelMessagesKey);
+        if (savedMessagesJson) {
+          savedMessages = JSON.parse(savedMessagesJson);
+        }
+        
+        // Check if message already exists
+        const messageExists = savedMessages.some(msg => msg.messageId === sentMessage.messageId);
+        if (!messageExists) {
+          savedMessages.push(processedSentMessage);
+          
+          // Sort messages by timestamp
+          savedMessages.sort((a, b) => {
+            const aTime = a.createdAt || 0;
+            const bTime = b.createdAt || 0;
+            return aTime - bTime;
+          });
+          
+          localStorage.setItem(channelMessagesKey, JSON.stringify(savedMessages));
+        }
+      } catch (saveError) {
+        console.error("Error saving sent message to localStorage:", saveError);
+      }
+      
+      // Verify the message was saved by checking the channel's latest messages
+      setTimeout(async () => {
+        try {
+          // Check if the message appears in the channel's messages
+          const messageListQuery = selectedChannel.createPreviousMessageListQuery();
+          messageListQuery.limit = 5; // Just check the most recent messages
+          const recentMessages = await messageListQuery.load();
+          
+          const messageSaved = recentMessages.some(msg => 
+            msg.messageId === sentMessage.messageId ||
+            (msg.message === messageText && Math.abs(extractTimestamp(msg) - currentTimestamp) < 60000)
+          );
+          
+          if (!messageSaved) {
+            console.warn("Message may not have been saved properly. Attempting to resend...");
+            // The message might not have been saved properly
+            // We could implement a resend mechanism here if needed
+          }
+        } catch (verifyError) {
+          console.error("Error verifying message was saved:", verifyError);
+        }
+      }, 2000); // Wait 2 seconds before checking
+      
     } catch (error) {
       console.error("Send message error:", error);
+      // Mark the pending message as failed
       setMessages((prevMessages) =>
         prevMessages.map((msg) =>
           msg._isPending && msg.messageId === pendingMessage.messageId ?
-            { ...msg, _isFailed: true } : msg
+            { ...msg, _isPending: false, _isFailed: true } : msg
         )
       );
     }
@@ -896,24 +1230,34 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
                     isActive ? "bg-gray-900 text-white" : "bg-white hover:bg-gray-100 hover:text-black"
                   }`}
                 >
-                  <div className="w-12 h-12 bg-gray-300 rounded-full mr-3"></div>
-                  <div className="flex-1">
-                    <p className="font-semibold text-sm">{ch.name || "(No channel name)"}</p>
-                    <p className={`text-xs truncate ${isActive ? "text-gray-300" : "text-gray-500"}`}>
+                  <div className="relative">
+                    <div className="w-12 h-12 bg-gray-300 rounded-full mr-3 flex-shrink-0"></div>
+                    {/* Unread indicator */}
+                    {channelUnreadCounts[ch.url] > 0 && (
+                      <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                        {channelUnreadCounts[ch.url] > 99 ? '99+' : channelUnreadCounts[ch.url]}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col flex-grow min-w-0 mr-2"> {/* Added min-w-0 to enable truncation and mr-2 for spacing */}
+                    <p className="font-semibold text-sm mb-1">{ch.name || "(No channel name)"}</p>
+                    <p className={`text-xs ${isActive ? "text-gray-300" : "text-gray-500"} truncate max-w-full`}>
                       {ch.lastMessage ? getMessageText(ch.lastMessage) : "Tap to start conversation"}
                     </p>
                   </div>
-                  <p className={`text-xs font-semibold ${isActive ? "text-gray-300" : "text-gray-500"}`}>
-                    {(() => {
-                      const timestamp = ch.lastMessage?.createdAt || ch.createdAt;
-                      if (!timestamp) return "";
-                      try {
-                        return formatMessageTime(timestamp);
-                      } catch (e) {
-                        return "";
-                      }
-                    })()}
-                  </p>
+                  <div className="flex-shrink-0 text-right"> {/* Using flex-shrink-0 to prevent timestamp from shrinking */}
+                    <p className={`text-xs font-semibold whitespace-nowrap ${isActive ? "text-gray-300" : "text-gray-500"}`}>
+                      {(() => {
+                        const timestamp = ch.lastMessage?.createdAt || ch.createdAt;
+                        if (!timestamp) return "";
+                        try {
+                          return formatMessageTime(timestamp);
+                        } catch (e) {
+                          return "";
+                        }
+                      })()}
+                    </p>
+                  </div>
                 </div>
               );
             })
@@ -962,7 +1306,34 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
         
         {/* Messages */}
         {!isConnecting && !error && (
-          <div className="flex-1 p-8 overflow-y-auto space-y-6">
+          <div 
+              className="flex-1 p-8 overflow-y-auto space-y-6" 
+              ref={messagesContainerRef}
+              onScroll={(e) => {
+                // Check if user has scrolled to the top (or very close to it)
+                if (e.target.scrollTop < 50 && !isLoadingMoreMessages && hasMoreMessages) {
+                  loadMoreMessages();
+                }
+              }}
+            >
+            {/* Loading indicator for older messages */}
+            {isLoadingMoreMessages && (
+              <div className="py-2 text-center">
+                <div className="inline-block px-4 py-2 bg-gray-200 text-gray-700 text-xs italic rounded-xl animate-pulse">
+                  Loading older messages...
+                </div>
+              </div>
+            )}
+
+            {/* No more messages indicator */}
+            {!isLoadingMoreMessages && !hasMoreMessages && messages.length > 50 && (
+              <div className="py-2 text-center">
+                <div className="inline-block px-4 py-2 bg-gray-100 text-gray-500 text-xs italic rounded-xl">
+                  No more messages to load
+                </div>
+              </div>
+            )}
+            
             {messageGroups.length > 0 ? (
               messageGroups.map((group, groupIndex) => {
                 const isSentByMe = group[0].sender?.userId === userId;
@@ -1024,49 +1395,6 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
                             <div key={message.messageId} className="my-0.5">
                               <div className={`relative px-4 py-2 text-sm shadow-sm ${bubbleStyle} group`}>
                                 <p>{getMessageText(message)}</p>
-                                
-                                {/* Emoji reaction button */}
-                                {!message._isSystemMessage && !message._isLoading && (
-                                  <button 
-                                    onClick={() => setShowEmojiPicker(showEmojiPicker === message.messageId ? null : message.messageId)}
-                                    className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full shadow-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-100"
-                                  >
-                                    <span className="text-xs">😀</span>
-                                  </button>
-                                )}
-                                
-                                {/* Emoji picker */}
-                                {showEmojiPicker === message.messageId && (
-                                  <div className="absolute top-0 right-0 transform -translate-y-full mt-2 bg-white rounded-lg shadow-lg p-2 z-10">
-                                    <div className="flex space-x-2">
-                                      {commonEmojis.map(emoji => (
-                                        <button 
-                                          key={emoji} 
-                                          onClick={() => addReaction(message.messageId, emoji)}
-                                          className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-full"
-                                        >
-                                          {emoji}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                
-                                {/* Display reactions */}
-                                {messageReactions[message.messageId] && Object.keys(messageReactions[message.messageId]).length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {Object.entries(messageReactions[message.messageId]).map(([emoji, users]) => (
-                                      <button
-                                        key={emoji}
-                                        onClick={() => addReaction(message.messageId, emoji)}
-                                        className={`flex items-center space-x-1 bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-0.5 ${users.includes(userId) ? 'ring-1 ring-indigo-400' : ''}`}
-                                      >
-                                        <span>{emoji}</span>
-                                        <span className="text-xs">{users.length}</span>
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
                               </div>
                               {isSentByMe && (
                                 <div className="text-xs text-right mr-2">
@@ -1116,13 +1444,12 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
         {!isConnecting && selectedChannel && (
           <div className="p-4 bg-white border-t flex items-start">
             <textarea
+              ref={textareaRef}
               placeholder="Write your message..."
               value={newMessage}
               onChange={(e) => {
                 setNewMessage(e.target.value);
-                // Auto-resize the textarea
-                e.target.style.height = 'auto';
-                e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
+                // Auto-resize happens in the useEffect
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -1130,9 +1457,8 @@ const MessageView = ({ userId, nickname = "", onConnectionError, sb }) => {
                   sendMessage();
                 }
               }}
-              className="flex-1 p-2 focus:outline-none text-black resize-none overflow-hidden min-h-[40px] max-h-[150px]"
+              className="flex-1 p-2 focus:outline-none text-black resize-none overflow-hidden min-h-[40px] max-h-[150px] transition-height duration-100"
               rows="1"
-              style={{ height: 'auto' }}
             />
             <button
               onClick={sendMessage}
