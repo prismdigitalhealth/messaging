@@ -541,33 +541,16 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
           <h1 className="text-xl font-semibold text-gray-800">Messages</h1>
         </div>
         
-        {/* Categories */}
+        {/* Channel list container */}
         <div className="flex-1 overflow-y-auto">
-          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
-            <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Groups</h2>
-            <button
-              onClick={() => setIsCreatingChannel(true)}
-              className="text-gray-500 hover:text-blue-500 transition-colors"
-              disabled={!isConnected}
-              title="Create New Channel"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </div>
-          
-          {/* Main channel list */}
-          <div className="flex-1 overflow-y-auto">
-            <ChannelList
-              channels={channels}
-              selectedChannel={selectedChannel}
-              onSelectChannel={selectChannel}
-              unreadCounts={channelUnreadCounts}
-              isConnected={isConnected}
-              onCreateChannelClick={() => setIsCreatingChannel(true)}
-            />
-          </div>
+          <ChannelList
+            channels={channels}
+            selectedChannel={selectedChannel}
+            onSelectChannel={selectChannel}
+            unreadCounts={channelUnreadCounts}
+            isConnected={isConnected}
+            onCreateChannelClick={() => setIsCreatingChannel(true)}
+          />
           
           {/* Connect button (if not connected) */}
           {!isConnected && !isConnecting && (
@@ -683,6 +666,16 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
             </div>
           </div>
         )}
+      </div>
+      
+      {/* Simple Right Side Panel */}
+      <div className="w-[300px] bg-white border-l border-gray-200 flex flex-col">
+        <div className="p-4 border-b border-gray-200">
+          <h3 className="font-medium text-gray-800">Right Side Panel</h3>
+        </div>
+        <div className="flex-1 p-4">
+          {/* Empty panel content */}
+        </div>
       </div>
       
       {/* Create Channel Modal */}

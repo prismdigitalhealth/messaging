@@ -131,10 +131,7 @@ const MessageList = ({
                               </span>
                             )}
                             
-                            {/* Message timestamp on hover */}
-                            <div className="absolute bottom-0 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500 pointer-events-none">
-                              {formatMessageTime(message.createdAt, true)}
-                            </div>
+
                           </div>
                           
                           {/* Failed message retry button */}
