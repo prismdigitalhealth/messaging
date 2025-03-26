@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import SendbirdChat from "@sendbird/chat";
 import { GroupChannelModule } from "@sendbird/chat/groupChannel";
 import LoginView from "./Login";
-import MessageView from "./Message";
+import Chat from "./components/chat/Chat";
 
 // Initialize Sendbird with your App ID
 const APP_ID = "BFB0CED3-D43A-4C53-9C75-76549E1FFD78";
@@ -64,7 +64,7 @@ const App = () => {
   return (
     <div>
       {isLoggedIn ? (
-        <MessageView 
+        <Chat 
           userId={userId}
           nickname={nickname}
           onConnectionError={handleConnectionError}
