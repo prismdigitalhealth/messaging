@@ -244,6 +244,73 @@ export const removeChannelHandlers = (channel, handlerId) => {
 };
 
 /**
+ * Refresh channel data - useful for manual refresh or after reconnection
+ * @param {Object} sb - Sendbird SDK instance
+ * @param {string} userId - Current user ID
+ * @param {boolean} refreshUnreadCounts - Whether to also refresh unread counts
+ * @returns {Promise<Array>} - Updated array of channels
+ */
+export const refreshChannels = async (sb, userId, refreshUnreadCounts = true) => {
+  try {
+    console.log("Manual refresh of channels initiated");
+    
+    // Ensure connection is established
+    if (!sb.currentUser) {
+      console.log("No current user during refresh, reconnecting...");
+      try {
+        await sb.connect(userId);
+      } catch (connectError) {
+        console.error("Reconnection error during refresh:", connectError);
+        throw new Error("Failed to reconnect during refresh");
+      }
+    }
+    
+    // Fetch the latest channels
+    const channelListQuery = sb.groupChannel.createMyGroupChannelListQuery();
+    channelListQuery.limit = 20;
+    channelListQuery.includeEmpty = true;
+    const fetchedChannels = await channelListQuery.next();
+    
+    // Refresh each channel to get the latest data if specified
+    if (refreshUnreadCounts && Array.isArray(fetchedChannels) && fetchedChannels.length > 0) {
+      // Process in batches to avoid overloading
+      const batchSize = 5;
+      const batches = Math.ceil(fetchedChannels.length / batchSize);
+      
+      for (let i = 0; i < batches; i++) {
+        const startIdx = i * batchSize;
+        const endIdx = Math.min(startIdx + batchSize, fetchedChannels.length);
+        const batch = fetchedChannels.slice(startIdx, endIdx);
+        
+        await Promise.all(
+          batch.map(async (channel) => {
+            try {
+              // This updates all channel data including messages and unread counts
+              await channel.refresh();
+            } catch (refreshError) {
+              console.error(`Error refreshing channel ${channel.url}:`, refreshError);
+              // Continue with other channels even if one fails
+            }
+          })
+        );
+      }
+    }
+    
+    // Sort by latest activity
+    const sortedChannels = fetchedChannels.sort((a, b) => {
+      const aTimestamp = a.lastMessage?.createdAt || a.createdAt || 0;
+      const bTimestamp = b.lastMessage?.createdAt || b.createdAt || 0;
+      return bTimestamp - aTimestamp;
+    });
+    
+    return sortedChannels;
+  } catch (error) {
+    console.error("Channel refresh error:", error);
+    throw error;
+  }
+};
+
+/**
  * Connect to Sendbird
  * @param {Object} sb - Sendbird SDK instance
  * @param {string} userId - Current user ID

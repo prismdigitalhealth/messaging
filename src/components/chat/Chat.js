@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import ChannelList from "./ChannelList";
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
@@ -13,12 +13,14 @@ import * as MessageService from "./services/MessageService";
  * - Handles connection to Sendbird
  * - Manages channels and messages
  * - Coordinates between sub-components
+ * - Supports both event-based updates and manual refresh
  */
 const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   // Channel state
   const [channels, setChannels] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [channelUnreadCounts, setChannelUnreadCounts] = useState({});
+  const [isRefreshingChannels, setIsRefreshingChannels] = useState(false);
   
   // Message state
   const [messages, setMessages] = useState([]);
@@ -37,11 +39,13 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   // Refs
   const messagesContainerRef = useRef(null);
   const channelHandlerRef = useRef(null); // Ref to store channel handler across renders
+  const reconnectionHandlerRef = useRef(null); // Ref to store reconnection handler ID
 
   // Connect to Sendbird when component mounts or userId changes
   useEffect(() => {
     let isComponentMounted = true;
     let connectionTimeoutId = null;
+    let reconnectionHandlerId = null;
     
     const initializeConnection = async () => {
       if (!userId) {
@@ -194,23 +198,39 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   
   /**
    * Refresh the channel list
+   * Simplified version to avoid React hook errors
    */
   const refreshChannels = async () => {
+    if (isRefreshingChannels) {
+      console.log("Already refreshing channels, skipping");
+      return false;
+    }
+    
     try {
-      const sortedChannels = await ChannelService.loadChannels(sb, userId);
-      setChannels(sortedChannels);
+      setIsRefreshingChannels(true);
+      console.log("Manually refreshing channels");
       
-      // Update unread counts state
-      const unreadCountsMap = {};
-      sortedChannels.forEach(channel => {
-        unreadCountsMap[channel.url] = channel.unreadMessageCount || 0;
+      // Use the basic loadChannels method to avoid dependency issues
+      const refreshedChannels = await ChannelService.loadChannels(sb, userId);
+      
+      // Update state with refreshed channels
+      setChannels(refreshedChannels);
+      
+      // Update unread counts
+      const updatedUnreadCounts = {};
+      refreshedChannels.forEach(channel => {
+        updatedUnreadCounts[channel.url] = channel.unreadMessageCount || 0;
       });
-      setChannelUnreadCounts(unreadCountsMap);
+      setChannelUnreadCounts(updatedUnreadCounts);
       
-      return sortedChannels;
+      console.log("Channels refreshed successfully:", refreshedChannels.length);
+      return true;
     } catch (error) {
       console.error("Error refreshing channels:", error);
-      return [];
+      setError("Failed to refresh channels");
+      return false;
+    } finally {
+      setIsRefreshingChannels(false);
     }
   };
   
@@ -326,6 +346,8 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   
   /**
    * Send a message to the selected channel
+   * @param {string} messageText - Text message to send
+   * @returns {Promise<void>}
    */
   const sendMessage = async (messageText) => {
     if (!selectedChannel || messageText.trim() === "") return;
@@ -350,6 +372,10 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
             sentMessage : msg
         )
       );
+      
+      // Note: We're not manually refreshing channels here anymore.
+      // Instead, we rely on Sendbird's event system via onMessageReceived handler
+      // which will automatically update the channel list when the message is confirmed.
       
     } catch (error) {
       console.error("Send message error:", error);
@@ -394,99 +420,117 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
     }
   };
   
-  // Set up channel event handlers when selectedChannel changes
+  // Event handlers setup with minimal dependencies
   useEffect(() => {
-    if (!selectedChannel || !isConnected || !sb) return;
+    // Skip if required objects aren't available
+    if (!selectedChannel || !sb) return;
     
-    // Get handler ID from channel URL to ensure uniqueness
-    const handlerId = `channel_handler_${selectedChannel.url.slice(-8)}`;
+    console.log("Setting up message handlers for channel:", selectedChannel.url);
     
-    // Message received handler
-    const onMessageReceived = (channel, message) => {
-      console.log("Message received:", message, "in channel:", channel.url);
-      
-      // Update unread count if message is in a different channel and not from the current user
-      if (channel.url !== selectedChannel?.url && message.sender?.userId !== userId) {
-        setChannelUnreadCounts(prev => ({
-          ...prev,
-          [channel.url]: (prev[channel.url] || 0) + 1
-        }));
-      }
-      
-      // If this is the currently selected channel, add the message to the UI
-      if (selectedChannel?.url === channel.url) {
-        // Add the message to the messages state
-        setMessages((prevMessages) => [...prevMessages, message]);
-      }
-      
-      // Update channels and ensure they are sorted by most recent activity
-      setChannels((prevChannels) => {
-        const updatedChannels = prevChannels.map((ch) =>
-          ch.url === channel.url ? { ...ch, lastMessage: message } : ch
-        )
-        // Re-sort channels by most recent message or creation date
-        .sort((a, b) => {
-          const aTimestamp = a.lastMessage?.createdAt || a.createdAt || 0;
-          const bTimestamp = b.lastMessage?.createdAt || b.createdAt || 0;
-          return bTimestamp - aTimestamp; // Descending order (newest first)
-        });
+    // Create all handlers without using component state directly
+    // We'll use these functions to manually update state when events occur
+    const handlers = {
+      // Will be called when a new message arrives
+      handleMessageReceived: (channel, message) => {
+        console.log("Message received in channel:", channel.url);
         
-        return updatedChannels;
-      });
-    };
-    
-    // Message updated handler
-    const onMessageUpdated = (channel, message) => {
-      if (selectedChannel.url === channel.url) {
-        // Update the message in the messages state
-        setMessages((prevMessages) =>
-          prevMessages.map((msg) =>
-            msg.messageId === message.messageId ? message : msg
-          )
+        // Update messages if in the current channel
+        if (channel.url === selectedChannel.url) {
+          setMessages(prev => [...prev, message]);
+        }
+        
+        // Update unread count for other channels
+        if (channel.url !== selectedChannel.url && message.sender?.userId !== userId) {
+          setChannelUnreadCounts(prev => ({
+            ...prev,
+            [channel.url]: (prev[channel.url] || 0) + 1
+          }));
+        }
+        
+        // Update the channel list with the new message
+        setChannels(prev => {
+          // Find and update the channel with the new message
+          const updated = prev.map(ch => 
+            ch.url === channel.url ? {...ch, lastMessage: message} : ch
+          );
+          
+          // Sort by latest activity
+          return updated.sort((a, b) => {
+            const aTime = a.lastMessage?.createdAt || a.createdAt || 0;
+            const bTime = b.lastMessage?.createdAt || b.createdAt || 0;
+            return bTime - aTime;
+          });
+        });
+      },
+      
+      // Called when a message is updated
+      handleMessageUpdated: (channel, message) => {
+        // Only update messages if in the current channel
+        if (channel.url === selectedChannel.url) {
+          setMessages(prev => 
+            prev.map(msg => msg.messageId === message.messageId ? message : msg)
+          );
+        }
+      },
+      
+      // Called when a message is deleted
+      handleMessageDeleted: (channel, messageId) => {
+        // Only update if in the current channel
+        if (channel.url === selectedChannel.url) {
+          setMessages(prev => prev.filter(msg => msg.messageId !== messageId));
+        }
+      },
+      
+      // Called when a channel is updated
+      handleChannelChanged: (channel) => {
+        setChannels(prev => 
+          prev.map(ch => ch.url === channel.url ? channel : ch)
         );
+        
+        // Update selected channel if it's the current one
+        if (channel.url === selectedChannel.url) {
+          setSelectedChannel(channel);
+        }
       }
     };
     
-    // Message deleted handler
-    const onMessageDeleted = (channel, messageId) => {
-      if (selectedChannel.url === channel.url) {
-        setMessages((prevMessages) =>
-          prevMessages.filter((msg) => msg.messageId !== messageId)
-        );
-      }
-    };
+    // Generate a unique handler ID
+    const handlerId = `channel_${selectedChannel.url.slice(-8)}_${Date.now()}`;
     
-    // Channel changed handler
-    const onChannelChanged = (channel) => {
-      setChannels((prevChannels) =>
-        prevChannels.map((ch) => (ch.url === channel.url ? channel : ch))
-      );
-      if (selectedChannel.url === channel.url) {
-        setSelectedChannel(channel);
-      }
-    };
+    try {
+      // Register handlers with the chat SDK
+      selectedChannel.addMessageReceivedHandler(handlerId, handlers.handleMessageReceived);
+      selectedChannel.addMessageUpdatedHandler(handlerId, handlers.handleMessageUpdated);
+      selectedChannel.addMessageDeletedHandler(handlerId, handlers.handleMessageDeleted);
+      selectedChannel.addChannelChangedHandler(handlerId, handlers.handleChannelChanged);
+      
+      // Store for cleanup
+      channelHandlerRef.current = handlerId;
+      
+      console.log("Event handlers registered with ID:", handlerId);
+    } catch (error) {
+      console.error("Failed to register handlers:", error);
+    }
     
-    // Set up channel handlers using the service - pass the selectedChannel directly
-    const newHandlerId = ChannelService.setupChannelHandlers(selectedChannel, handlerId, {
-      onMessageReceived,
-      onMessageUpdated,
-      onMessageDeleted,
-      onChannelChanged
-    });
-    
-    // Store the handler ID for cleanup
-    channelHandlerRef.current = newHandlerId;
-    
-    // Clean up when the component unmounts or selectedChannel changes
+    // Clean up function
     return () => {
-      try {
-        // Use the new removeChannelHandlers method from the service
-        ChannelService.removeChannelHandlers(selectedChannel, newHandlerId);
-      } catch (e) {
-        console.error("Error removing channel handler:", e);
+      if (selectedChannel && channelHandlerRef.current) {
+        try {
+          console.log("Removing channel handlers:", channelHandlerRef.current);
+          selectedChannel.removeMessageReceivedHandler(channelHandlerRef.current);
+          selectedChannel.removeMessageUpdatedHandler(channelHandlerRef.current);
+          selectedChannel.removeMessageDeletedHandler(channelHandlerRef.current);
+          selectedChannel.removeChannelChangedHandler(channelHandlerRef.current);
+        } catch (e) {
+          console.error("Error cleaning up channel handlers:", e);
+        }
       }
     };
-  }, [selectedChannel, isConnected, userId, sb]);
+  }, [selectedChannel, userId]); // Minimal dependency array
+
+  // IMPORTANT: Reconnection handler temporarily removed to fix React hook errors
+  // We will re-implement this after the application is stable
+  // END OF REMOVED CODE
   
   return (
     <div className="flex h-screen bg-gray-50">
