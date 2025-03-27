@@ -22,9 +22,10 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
     textarea.style.height = 'auto';
     
     // Set height based on content with min/max constraints
+    // Starting at 100px as requested, and expanding as needed without scroll
     const newHeight = Math.max(
-      40, // min height (single line)
-      Math.min(textarea.scrollHeight, 150) // max height 150px
+      100, // min height 100px as requested
+      Math.min(textarea.scrollHeight, 500) // max height enough for ~1000 chars
     );
     textarea.style.height = `${newHeight}px`;
   };
@@ -132,9 +133,9 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
       )}
       
       {/* Message input area */}
-      <div className="flex items-center">
-        {/* Attachment button */}
-        <div className="mr-2 relative">
+      <div className="flex items-center relative">
+        {/* Attachment button at the right side of the message field */}
+        <div className="absolute right-3 top-3 z-10">
           <button
             type="button"
             onClick={toggleAttachmentMenu}
@@ -182,27 +183,27 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
         </div>
         
         <div className="flex-grow relative">
-          <textarea
-            ref={textareaRef}
-            value={message}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            className="w-full py-2 bg-transparent border-0 border-b border-gray-200 focus:outline-none focus:border-blue-300 resize-none text-gray-700 placeholder-gray-500"
-            disabled={isDisabled}
-            style={{
-              minHeight: "40px",
-              maxHeight: "150px",
-              overflowY: message.length > 100 ? "auto" : "hidden"
-            }}
-          />
+          <div className="relative w-full">
+            <textarea
+              ref={textareaRef}
+              value={message}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message..."
+              className="w-full py-4 pr-16 pl-4 border-0 focus:outline-none resize-none text-gray-700 placeholder-gray-500"
+              disabled={isDisabled}
+              maxLength={1000} // Cap at 1000 characters
+              style={{
+                minHeight: "100px", // Starting height of 100px
+                maxHeight: "500px", // Enough for ~1000 chars
+                overflowY: "hidden", // No scrolling as requested
+                borderRadius: "8px",
+                backgroundColor: "#f8f9fa"
+              }}
+            />
+          </div>
 
-          {/* Character count indicator */}
-          {message.length > 0 && (
-            <div className="absolute right-14 bottom-2 text-xs text-gray-500">
-              {message.length}
-            </div>
-          )}
+          {/* Character count removed as requested */}
           
           {/* File count indicator */}
           {selectedFiles.length > 0 && (
@@ -211,25 +212,29 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
             </div>
           )}
           
-          <button
-            onClick={handleSend}
-            disabled={!message.trim() || isDisabled}
-            className={`absolute right-2 bottom-1 p-2 rounded-full flex items-center justify-center focus:outline-none transition-all ${
-              !message.trim() || isDisabled
-                ? "text-gray-300 cursor-not-allowed"
-                : "text-blue-500 hover:bg-blue-50"
-            }`}
-            title="Send message"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              viewBox="0 0 20 20"
-              fill="currentColor"
+          {/* Send button positioned under the attachment button, moved up by 12 points */}
+          <div className="absolute right-3 top-[52px] z-10">
+            <button
+              onClick={handleSend}
+              disabled={!message.trim() || isDisabled}
+              className={`p-2 rounded-full flex items-center justify-center focus:outline-none transition-all ${
+                !message.trim() || isDisabled
+                  ? "text-gray-300 cursor-not-allowed"
+                  : "text-blue-500 hover:bg-blue-50"
+              }`}
+              title="Send message"
             >
-              <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-            </svg>
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                style={{ transform: 'rotate(90deg)' }} // 90 degrees clockwise rotation
+              >
+                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
       
