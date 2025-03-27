@@ -95,7 +95,7 @@ const ChannelList = ({
           <input
             type="text"
             placeholder="Search channels..."
-            className="pl-9 pr-4 py-2 w-full text-sm bg-gray-100 border-0 rounded-lg focus:ring-2 focus:ring-gray-700 focus:bg-white transition-all"
+            className="pl-9 pr-4 py-2 w-full text-xs bg-gray-100 border-0 rounded-lg focus:ring-2 focus:ring-gray-700 focus:bg-white transition-all"
           />
           <div className="absolute left-3 top-2.5 text-gray-400">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -116,7 +116,7 @@ const ChannelList = ({
       </div>
       
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-medium text-gray-700">Channel List</h3>
+        <h3 className="text-xs font-medium text-gray-700">Channel List</h3>
         <div className="flex items-center gap-2">
           {isRefreshing && (
             <div className="text-xs text-blue-600 flex items-center">
@@ -170,7 +170,7 @@ const ChannelList = ({
             <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
-            <p className="text-gray-500 text-sm">
+            <p className="text-gray-500 text-xs">
               {isConnected ? "No channels yet. Create your first channel!" : "Connecting to chat server..."}
             </p>
             {isConnected && (
@@ -208,7 +208,7 @@ const ChannelList = ({
                     </div>
                     <div className="flex-grow min-w-0">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="font-medium truncate text-gray-900">
+                        <span className="text-sm font-medium truncate text-gray-900">
                           {channel.name || `Channel ${channel.url.slice(-4)}`}
                         </span>
                         {lastMessageTime && (
@@ -216,7 +216,7 @@ const ChannelList = ({
                         )}
                       </div>
                       <div className="flex items-center">
-                        <span className="text-sm text-gray-500 truncate">
+                        <span className="text-xs text-gray-500 truncate">
                           {lastMessage ? getMessagePreview(lastMessage) : "No messages yet"}
                         </span>
                         {unreadCount > 0 && (

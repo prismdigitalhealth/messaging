@@ -1,6 +1,7 @@
 /**
  * MessageService.js
  * Handles all message-related operations with Sendbird
+ * - Includes file message support for images, videos, and other attachments
  */
 import { extractTimestamp } from '../utils';
 
@@ -131,7 +132,7 @@ export const loadMoreMessages = async (previousMessageQuery) => {
  * @returns {Promise<Object>} - The sent message object
  */
 export const sendMessage = async (channel, messageText, userId) => {
-  if (!channel || messageText.trim() === "") {
+  if (!channel || (!messageText || messageText.trim() === "")) {
     throw new Error("Channel and message text are required");
   }
   
@@ -237,5 +238,136 @@ export const markChannelAsRead = async (channel) => {
     }
   } catch (error) {
     console.error("Error marking channel as read:", error);
+  }
+};
+
+/**
+ * Send a file message to a channel
+ * @param {Object} channel - Sendbird channel object
+ * @param {Array<File>} files - Array of file objects to send
+ * @param {string} messageText - Optional text message to include with the files
+ * @param {string} userId - Current user ID
+ * @returns {Promise<Object>} - The sent file message object
+ */
+export const sendFileMessage = async (channel, files, messageText = "", userId) => {
+  if (!channel || !files || files.length === 0) {
+    throw new Error("Channel and files are required");
+  }
+  
+  const currentTimestamp = Date.now();
+  
+  // Create a pending message to return immediately
+  const pendingMessage = {
+    messageId: `pending_file_${currentTimestamp}`,
+    message: messageText,
+    sender: { userId },
+    createdAt: currentTimestamp,
+    _isPending: true,
+    messageType: "file",
+    name: files.length === 1 ? files[0].name : `${files.length} files`,
+    fileType: files.length === 1 ? files[0].type : "multiple",
+    size: files.reduce((total, file) => total + file.size, 0),
+    _files: files
+  };
+  
+  try {
+    // We will return this reference to be updated as upload progresses
+    let uploadProgress = 0;
+    let sentMessage = null;
+    
+    // For a single file, use file message method (simplified for reliability)
+    const file = files[0]; // Handle first file as primary (even if multiple)
+    
+    // Use promise-based approach for better control of the process
+    await new Promise(async (resolve, reject) => {
+      try {
+        // Prepare params with the file
+        const params = {
+          file: file,
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+          // For images, ensure we generate thumbnails for preview
+          thumbnailSizes: file.type.startsWith('image/') ? [
+            {maxWidth: 200, maxHeight: 200},
+            {maxWidth: 400, maxHeight: 400}
+          ] : [],
+          message: messageText || ""
+        };
+        
+        // Use the Promise-based sendFileMessage approach
+        const fileMessageParams = channel.sendFileMessage(params);
+        
+        // Track upload progress
+        if (fileMessageParams.onProgress) {
+          fileMessageParams.onProgress((bytesSent, totalBytes) => {
+            uploadProgress = Math.round((bytesSent / totalBytes) * 100);
+            console.log(`File upload progress: ${uploadProgress}%`);
+          });
+        }
+        
+        // Handle upload completion
+        fileMessageParams.onSucceeded((message) => {
+          console.log("File upload completed successfully:", message);
+          sentMessage = message;
+          resolve(message);
+        });
+        
+        // Handle upload failure
+        fileMessageParams.onFailed((error) => {
+          console.error("File upload failed:", error);
+          reject(error);
+        });
+      } catch (err) {
+        console.error("Error in file upload promise:", err);
+        reject(err);
+      }
+    });
+    
+    console.log("File message sent, response:", sentMessage);
+    
+    // If we didn't get a message response, throw an error
+    if (!sentMessage) {
+      throw new Error("No message received from Sendbird after upload");
+    }
+    
+    // Make sure the sent message has all required properties for display
+    // This is critical for photos to display correctly
+    const processedSentMessage = {
+      ...sentMessage,
+      // Ensure basic properties
+      messageId: sentMessage.messageId,
+      message: messageText || "",
+      messageType: "file",
+      name: sentMessage.name || files[0].name,
+      url: sentMessage.url,  // Important for image display
+      type: sentMessage.type || files[0].type,
+      // Metadata
+      sender: sentMessage.sender || { userId },
+      createdAt: sentMessage.createdAt || currentTimestamp,
+      // Status flags
+      _isPending: false, 
+      _isComplete: true
+    };
+    
+    console.log("Processed message for return:", processedSentMessage);
+    
+    // Don't save to localStorage for now to simplify - rely on Sendbird
+    
+    return {
+      pendingMessage,
+      sentMessage: processedSentMessage
+    };
+  } catch (error) {
+    console.error("Send file message error:", error);
+    // Return the pending message with a failed flag
+    return {
+      pendingMessage: { 
+        ...pendingMessage, 
+        _isPending: false, 
+        _isFailed: true 
+      },
+      error
+    };
   }
 };

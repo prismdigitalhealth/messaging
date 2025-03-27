@@ -27,6 +27,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   const [previousMessageQuery, setPreviousMessageQuery] = useState(null);
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [isFileSending, setIsFileSending] = useState(false);
   
   // Connection state
   const [isConnected, setIsConnected] = useState(false);
@@ -383,6 +384,207 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   };
   
   /**
+   * Send a file message to the selected channel with clear loading indicator
+   * @param {Array<File>} files - Files to send
+   * @param {string} messageText - Optional text message to include with the files
+   * @returns {Promise<void>}
+   */
+  const sendFileMessage = async (files, messageText = "") => {
+    if (!selectedChannel || !files || files.length === 0) return;
+    
+    const file = files[0]; // Focus on the first file for simplicity
+    const isImage = file.type.startsWith('image/');
+    const currentTimestamp = Date.now();
+    
+    try {
+      // 1. Create and show an uploading message right away
+      const uploadingMessage = {
+        messageId: `uploading_${currentTimestamp}`,
+        message: messageText,
+        sender: { userId },
+        createdAt: currentTimestamp,
+        _isPending: true,
+        _isUploading: true,
+        uploadProgress: 0,
+        messageType: "file",
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        // For images, create a local preview URL
+        _localImageUrl: isImage ? URL.createObjectURL(file) : null,
+        _files: [file]
+      };
+      
+      // Show the uploading indicator immediately
+      console.log("Adding uploading message to UI:", uploadingMessage);
+      setMessages(prevMessages => [...prevMessages, uploadingMessage]);
+      
+      // 2. Send the file with Sendbird
+      const params = {
+        file: file,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type,
+        thumbnailSizes: isImage ? [{maxWidth: 400, maxHeight: 400}] : [],
+        message: messageText || ""
+      };
+      
+      // 3. Use direct Sendbird API for simpler, more reliable approach
+      const fileMessageParams = selectedChannel.sendFileMessage(params);
+      
+      // Track upload progress and update UI
+      if (fileMessageParams.onProgress) {
+        fileMessageParams.onProgress((bytesSent, totalBytes) => {
+          const progress = Math.round((bytesSent / totalBytes) * 100);
+          console.log(`Upload progress: ${progress}%`);
+          
+          // Update the progress in the message
+          setMessages(prevMessages => 
+            prevMessages.map(msg => 
+              msg.messageId === uploadingMessage.messageId ? 
+                {...msg, uploadProgress: progress} : msg
+            )
+          );
+        });
+      }
+      
+      // 4. Wait for upload to complete
+      const sentMessage = await new Promise((resolve, reject) => {
+        fileMessageParams
+          .onSucceeded(message => {
+            console.log("File upload succeeded:", message);
+            resolve(message);
+          })
+          .onFailed((error) => {
+            console.error("File upload failed:", error);
+            reject(error);
+          });
+      });
+      
+      // 5. IMPORTANT: Fetch the complete message to ensure we have all properties
+      let completeMessage = sentMessage;
+      
+      try {
+        if (selectedChannel.getMessageById && sentMessage.messageId) {
+          // This fetch is critical for photos to display correctly
+          const fetchedMessage = await selectedChannel.getMessageById(sentMessage.messageId);
+          if (fetchedMessage) {
+            completeMessage = fetchedMessage;
+            console.log("Retrieved complete message:", completeMessage);
+            
+            // CRITICAL: Debug and log all important file properties
+            if (completeMessage.type && completeMessage.type.startsWith('image/')) {
+              console.log("Image properties found:", {
+                url: completeMessage.url,
+                thumbnails: completeMessage.thumbnails,
+                type: completeMessage.type,
+                name: completeMessage.name
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("Could not fetch complete message:", error);
+      }
+      
+      // 6. CRITICAL: Extract and preserve ALL properties needed for file display
+      // Sendbird stores file information in different places depending on the message structure
+      // This careful extraction ensures images display properly without requiring a refresh
+      const extractFileProperties = (msg) => {
+        // Start with the Sendbird file URL which could be in multiple locations
+        let fileUrl = msg.url;
+        
+        // Some messages store the URL in a requiredMessageKeys.file structure
+        if (!fileUrl && msg.requiredMessageKeys && msg.requiredMessageKeys.file) {
+          fileUrl = msg.requiredMessageKeys.file.url;
+        }
+        
+        // Message object might contain the URL (happens with file messages)
+        if (!fileUrl && msg.message && typeof msg.message === 'object' && msg.message.url) {
+          fileUrl = msg.message.url;
+        }
+        
+        // Handle the case where msg.message is a FileMessage object itself
+        if (!fileUrl && msg.message && msg.message.url) {
+          fileUrl = msg.message.url;
+        }
+        
+        // For thumbnails, check all possible locations
+        let thumbnails = msg.thumbnails || [];
+        if (!thumbnails.length && msg.message && msg.message.thumbnails) {
+          thumbnails = msg.message.thumbnails;
+        }
+        
+        return {
+          url: fileUrl,
+          name: msg.name || msg.fileName || file.name,
+          type: msg.type || msg.mimeType || file.type,
+          thumbnails: thumbnails,
+          size: msg.size || file.size
+        };
+      };
+      
+      // Extract all file properties from the complete message
+      const fileProps = extractFileProperties(completeMessage);
+      console.log("Extracted file properties:", fileProps);
+      
+      // Create a complete message with all necessary properties
+      const finalMessage = {
+        ...completeMessage,
+        messageType: "file",
+        _isComplete: true,
+        _isUploading: false,
+        message: messageText || "",
+        // Explicitly add all file properties
+        url: fileProps.url,
+        name: fileProps.name,
+        type: fileProps.type,
+        thumbnails: fileProps.thumbnails,
+        size: fileProps.size,
+        // Add the raw file data for thumbnail generation
+        _rawFile: file
+      };
+      
+      // Debug
+      console.log("Final message with all properties:", finalMessage);
+      
+      // 7. Add the message to the UI after cleaning up the uploading version
+      setMessages(prevMessages => {
+        // First remove the uploading message
+        const filteredMessages = prevMessages.filter(msg => 
+          msg.messageId !== uploadingMessage.messageId
+        );
+        
+        // Then add the complete message
+        return [...filteredMessages, finalMessage].sort((a, b) => 
+          (a.createdAt || 0) - (b.createdAt || 0)
+        );
+      });
+      
+      // Clean up any object URLs we created
+      if (uploadingMessage._localImageUrl) {
+        URL.revokeObjectURL(uploadingMessage._localImageUrl);
+      }
+      
+      // Refresh the channel list
+      await refreshChannels();
+      
+    } catch (error) {
+      console.error("Send file message error:", error);
+      
+      // Update UI to show the error
+      setMessages(prevMessages => 
+        prevMessages.map(msg => 
+          msg.messageId === `uploading_${currentTimestamp}` ? 
+            {...msg, _isUploading: false, _isFailed: true} : msg
+        )
+      );
+    } finally {
+      setIsFileSending(false);
+    }
+  };
+  
+  /**
    * Retry sending a failed message
    */
   const retryFailedMessage = (failedMessage) => {
@@ -432,11 +634,50 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
     const handlers = {
       // Will be called when a new message arrives
       handleMessageReceived: (channel, message) => {
-        console.log("Message received in channel:", channel.url);
+        console.log("Message received in channel:", channel.url, message);
+        
+        // Process the message to ensure it has all necessary properties
+        // This is crucial for file messages
+        const processedMessage = {
+          ...message,
+          // Ensure we have the message text
+          message: message.message || "",
+          // Handle file message properties
+          ...(message.type && message.type.startsWith("FILE") && {
+            messageType: "file",
+            name: message.name || "File",
+            url: message.url || "",
+            fileType: message.type || "application/octet-stream",
+            size: message.size || 0
+          }),
+          // Ensure user information is available
+          sender: message.sender || { userId: message.sender?.userId || "unknown" }
+        };
         
         // Update messages if in the current channel
         if (channel.url === selectedChannel.url) {
-          setMessages(prev => [...prev, message]);
+          // Check if we already have a pending or local version of this message
+          setMessages(prev => {
+            const existingMsgIndex = prev.findIndex(msg => 
+              // Match by messageId if available
+              (msg.messageId && msg.messageId === message.messageId) ||
+              // For local pending file messages, match by name and timestamp if close
+              (msg._isPending && 
+               msg.messageType === "file" && 
+               msg.name === message.name && 
+               Math.abs(msg.createdAt - message.createdAt) < 60000)
+            );
+            
+            if (existingMsgIndex >= 0) {
+              // Replace existing message with server copy
+              const updatedMessages = [...prev];
+              updatedMessages[existingMsgIndex] = processedMessage;
+              return updatedMessages;
+            } else {
+              // Add as new message
+              return [...prev, processedMessage];
+            }
+          });
         }
         
         // Update unread count for other channels
@@ -504,6 +745,59 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
       selectedChannel.addMessageDeletedHandler(handlerId, handlers.handleMessageDeleted);
       selectedChannel.addChannelChangedHandler(handlerId, handlers.handleChannelChanged);
       
+      // Add file message specific handlers
+      // This is critical for photo attachments to appear immediately
+      if (sb.GroupChannel.addFileMessageHandler) {
+        // Handler for when file upload completes successfully
+        sb.GroupChannel.addFileMessageHandler(handlerId, (channel, message) => {
+          console.log("File message completed:", message);
+          if (channel.url === selectedChannel.url) {
+            // Process file message with correct metadata
+            const processedMessage = {
+              ...message,
+              messageType: "file",
+              // Ensure file metadata is present
+              name: message.name || "File",
+              url: message.url || "",
+              fileType: message.type || "application/octet-stream",
+              size: message.size || 0,
+              _isPending: false
+            };
+            
+            // Update message in UI - replace any pending version
+            setMessages(prevMessages => {
+              const msgIndex = prevMessages.findIndex(msg => 
+                // Match by messageId if available
+                (msg.messageId && msg.messageId === message.messageId) ||
+                // For pending files, match by name and approximate timestamp
+                (msg._isPending && 
+                 msg.messageType === "file" && 
+                 msg.name === message.name && 
+                 Math.abs(msg.createdAt - message.createdAt) < 60000)
+              );
+              
+              if (msgIndex >= 0) {
+                // Replace the pending message with the completed one
+                const updatedMessages = [...prevMessages];
+                
+                // Clean up any local ObjectURLs to prevent memory leaks
+                if (updatedMessages[msgIndex]._localUrls) {
+                  updatedMessages[msgIndex]._localUrls.forEach(item => {
+                    if (item.url) URL.revokeObjectURL(item.url);
+                  });
+                }
+                
+                updatedMessages[msgIndex] = processedMessage;
+                return updatedMessages;
+              } else {
+                // If no matching message found, add as new
+                return [...prevMessages, processedMessage];
+              }
+            });
+          }
+        });
+      }
+      
       // Store for cleanup
       channelHandlerRef.current = handlerId;
       
@@ -538,7 +832,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
       <div className="w-[350px] bg-white border-r border-gray-200 flex flex-col">
         {/* Sidebar header */}
         <div className="p-4 border-b border-gray-100">
-          <h1 className="text-xl font-semibold text-gray-800">Messages</h1>
+          <h1 className="text-lg font-semibold text-gray-800">Messages</h1>
         </div>
         
         {/* Channel list container */}
@@ -576,8 +870,8 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
                 {selectedChannel.name ? selectedChannel.name.charAt(0).toUpperCase() : "C"}
               </div>
               <div>
-                <h2 className="font-semibold text-gray-800">{selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}</h2>
-                <p className="text-xs text-gray-400">
+                <h2 className="text-sm font-semibold text-gray-800">{selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}</h2>
+                <p className="text-xs text-gray-400 text-[10px]">
                   Last seen {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                 </p>
               </div>
@@ -623,6 +917,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
             <div className="border-t border-gray-100 bg-white p-3">
               <MessageInput
                 onSendMessage={sendMessage}
+                onSendFileMessage={sendFileMessage}
                 isDisabled={!isConnected || !selectedChannel}
               />
             </div>
@@ -671,7 +966,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
       {/* Simple Right Side Panel */}
       <div className="w-[300px] bg-white border-l border-gray-200 flex flex-col">
         <div className="p-4 border-b border-gray-200">
-          <h3 className="font-medium text-gray-800">Right Side Panel</h3>
+          <h3 className="text-sm font-medium text-gray-800">Right Side Panel</h3>
         </div>
         <div className="flex-1 p-4">
           {/* Empty panel content */}
