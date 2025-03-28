@@ -38,13 +38,157 @@ export const loadMessages = async (channel) => {
       }
     }
     
-    const messageListQuery = channel.createPreviousMessageListQuery();
-    messageListQuery.limit = 50;
-    if ("reverse" in messageListQuery) {
-      messageListQuery.reverse = true;
+    // Create params object for message query with comprehensive settings for reactions
+    let messageParams = {
+      includeReactions: true,  // CRITICAL: Include all reactions
+      includeParentMessageInfo: true, // Include parent message info for replies
+      includeThreadInfo: true, // Include thread info if applicable
+      includeMetaArray: true // Include message metadata
+    };
+    
+    console.log('Message query params:', messageParams);
+    
+    // Create message query with parameters (using correct SDK method)
+    let messageListQuery;
+    
+    try {
+      // Proper approach for Sendbird SDK v4
+      messageListQuery = channel.createPreviousMessageListQuery(messageParams);
+      messageListQuery.limit = 50;
+      
+      // Double check that includeReactions is set (for SDK compatibility)
+      if (messageListQuery.includeReactions !== undefined) {
+        messageListQuery.includeReactions = true;
+        console.log('Confirmed includeReactions is enabled on query');
+      }
+      
+      // Also try additional methods if they exist
+      if (messageListQuery.setIncludeReactions && typeof messageListQuery.setIncludeReactions === 'function') {
+        messageListQuery.setIncludeReactions(true);
+        console.log('Used setIncludeReactions method');
+      }
+      
+      if ("reverse" in messageListQuery) {
+        messageListQuery.reverse = true;
+      }
+    } catch (queryError) {
+      console.error('Error creating sophisticated query:', queryError);
+      // Fall back to basic approach
+      messageListQuery = channel.createPreviousMessageListQuery();
+      messageListQuery.includeReactions = true;
+      messageListQuery.limit = 50;
     }
     
+    console.log('Loading messages with includeReactions parameter');
     const fetchedMessages = await messageListQuery.load();
+    
+    // Debug reactions for diagnostics - log comprehensive information
+    const messagesWithReactions = fetchedMessages.filter(msg => msg.reactions && msg.reactions.length > 0);
+    console.log(`Found ${messagesWithReactions.length} messages with reactions out of ${fetchedMessages.length} total`);
+    
+    // Log detailed information about each message with reactions
+    messagesWithReactions.forEach(msg => {
+      console.log(`Message ${msg.messageId} (${msg.message || 'no text'}) has reactions:`, 
+        msg.reactions.map(r => `${r.key}:${r.userIds?.length || 0} users`).join(', '));
+    });
+    
+    // Special debug: if we find no reactions but expect them, try direct access or fix
+    if (messagesWithReactions.length === 0 && fetchedMessages.length > 0) {
+      console.warn('⚠️ No messages with reactions found - possible SDK issue!');
+      
+      // Try to directly access reactions for diagnostic purposes
+      try {
+        const testMessage = fetchedMessages[0];
+        console.log('Testing direct reaction access on message:', testMessage.messageId);
+        
+        // Check for direct reaction methods
+        if (testMessage.getReactions && typeof testMessage.getReactions === 'function') {
+          console.log('Using getReactions() method directly on message...');
+          const directReactions = await testMessage.getReactions();
+          console.log('Direct reactions result:', directReactions);
+        }
+      } catch (reactErr) {
+        console.error('Direct reaction test failed:', reactErr);
+      }
+    }
+    
+    // Apply reactions from our two storage systems
+    // 1. First check our new 'user_reactions' format (prioritize this)
+    try {
+      const storageKey = 'user_reactions';
+      const storedReactions = localStorage.getItem(storageKey);
+      
+      if (storedReactions) {
+        const userReactions = JSON.parse(storedReactions);
+        console.log('Found stored user reactions for all users:', Object.keys(userReactions));
+        
+        // Get current user ID for prioritizing current user's reactions
+        let currentUserId = null;
+        try {
+          const sb = window.sendbird || window.SendBird || (window.SBUGlobal && window.SBUGlobal.sbInstance);
+          if (sb && sb.currentUser) {
+            currentUserId = sb.currentUser.userId;
+            console.log('Current user for reactions identified as:', currentUserId);
+          }
+        } catch (e) {}
+        
+        // Apply all reactions stored for all users
+        Object.entries(userReactions).forEach(([userId, messageReactions]) => {
+          // For each user's stored reactions
+          Object.entries(messageReactions).forEach(([msgId, emojiKeys]) => {
+            // Find the message if it exists in our fetched messages
+            const message = fetchedMessages.find(msg => msg.messageId === msgId);
+            if (message) {
+              // Ensure message has reactions array
+              if (!message.reactions) message.reactions = [];
+              
+              // Apply each emoji
+              emojiKeys.forEach(emojiKey => {
+                // Check if this reaction already exists
+                let existingReaction = message.reactions.find(r => r.key === emojiKey);
+                
+                if (existingReaction) {
+                  // Add user to existing reaction if not already there
+                  if (!existingReaction.userIds.includes(userId)) {
+                    existingReaction.userIds.push(userId);
+                  }
+                } else {
+                  // Create new reaction with this user
+                  message.reactions.push({
+                    key: emojiKey,
+                    userIds: [userId]
+                  });
+                }
+              });
+              
+              console.log(`Applied ${emojiKeys.length} reactions from ${userId} to message ${msgId}`);
+            }
+          });
+        });
+      }
+    } catch (error) {
+      console.error('Error applying user reactions from localStorage:', error);
+    }
+    
+    // 2. Check legacy per-message reaction storage format (for backward compatibility)
+    fetchedMessages.forEach(message => {
+      try {
+        const messageReactionsKey = `msg_reactions_${message.messageId}`;
+        const savedReactionsJson = localStorage.getItem(messageReactionsKey);
+        if (savedReactionsJson) {
+          const savedReactions = JSON.parse(savedReactionsJson);
+          if (savedReactions && savedReactions.length > 0) {
+            // If no reactions exist yet, use the legacy ones
+            if (!message.reactions || message.reactions.length === 0) {
+              message.reactions = savedReactions;
+              console.log(`Restored legacy reactions for message ${message.messageId}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`Error restoring legacy reactions for message ${message.messageId}:`, error);
+      }
+    });
     
     // Merge messages from localStorage and Sendbird API
     let mergedMessages = [...fetchedMessages];
@@ -111,6 +255,9 @@ export const loadMoreMessages = async (previousMessageQuery) => {
   }
   
   try {
+    // Ensure reactions are included in the query
+    previousMessageQuery.includeReactions = true;
+    
     // Load previous messages
     const oldMessages = await previousMessageQuery.load();
     
@@ -249,6 +396,169 @@ export const markChannelAsRead = async (channel) => {
  * @param {string} userId - Current user ID
  * @returns {Promise<Object>} - The sent file message object
  */
+/**
+ * Add an emoji reaction to a message
+ * @param {Object} message - Sendbird message object
+ * @param {string} emojiKey - Key of the emoji to add
+ * @returns {Promise<Object>} - The reaction event object
+ */
+// Helper function to store reaction in local storage
+const saveReactionToLocalStorage = (userId, messageId, emojiKey, isAdd = true) => {
+  try {
+    // Get existing reactions or initialize new object
+    const storageKey = 'user_reactions';
+    let userReactions = {};
+    const storedReactions = localStorage.getItem(storageKey);
+    
+    if (storedReactions) {
+      userReactions = JSON.parse(storedReactions);
+    }
+    
+    // Create userId and messageId entries if they don't exist
+    if (!userReactions[userId]) {
+      userReactions[userId] = {};
+    }
+    
+    if (!userReactions[userId][messageId]) {
+      userReactions[userId][messageId] = [];
+    }
+    
+    // Add or remove the emoji reaction
+    if (isAdd) {
+      // Add if not already exists
+      if (!userReactions[userId][messageId].includes(emojiKey)) {
+        userReactions[userId][messageId].push(emojiKey);
+      }
+    } else {
+      // Remove if exists
+      userReactions[userId][messageId] = userReactions[userId][messageId]
+        .filter(emoji => emoji !== emojiKey);
+      
+      // Clean up empty entries
+      if (userReactions[userId][messageId].length === 0) {
+        delete userReactions[userId][messageId];
+      }
+      
+      if (Object.keys(userReactions[userId]).length === 0) {
+        delete userReactions[userId];
+      }
+    }
+    
+    // Save back to localStorage
+    localStorage.setItem(storageKey, JSON.stringify(userReactions));
+    console.log(`${isAdd ? 'Added' : 'Removed'} reaction ${emojiKey} for message ${messageId} in local storage`);
+    return true;
+  } catch (error) {
+    console.error('Error saving reaction to local storage:', error);
+    return false;
+  }
+};
+
+export const addReaction = async (message, emojiKey) => {
+  if (!message || !emojiKey) {
+    throw new Error("Message and emoji key are required");
+  }
+  
+  try {
+    console.log(`Adding reaction '${emojiKey}' to message:`, message.messageId);
+    
+    // Get current user ID from Sendbird if possible
+    let userId = null;
+    try {
+      // Try to get the Sendbird instance to find current user
+      const sb = window.sendbird || window.SendBird || (window.SBUGlobal && window.SBUGlobal.sbInstance);
+      if (sb) {
+        userId = sb.currentUser?.userId;
+      }
+    } catch (e) {
+      console.warn('Unable to get current userId:', e);
+    }
+    
+    // 1. First, save to local storage for persistence regardless of Sendbird API result
+    if (userId) {
+      saveReactionToLocalStorage(userId, message.messageId, emojiKey, true);
+    }
+    
+    // 2. Then try the standard Sendbird API approach
+    const reactionEvent = await message.addReaction(emojiKey);
+    console.log('REACTION EVENT DETAILS:', reactionEvent);
+    
+    // Apply the event to the message object if the method exists
+    if (message.applyReactionEvent && typeof message.applyReactionEvent === 'function') {
+      message.applyReactionEvent(reactionEvent);
+    }
+    
+    // 3. Verify and log results
+    if (message.reactions) {
+      const reaction = message.reactions.find(r => r.key === emojiKey);
+      console.log(`Reaction status: ${reaction ? 'Added to message' : 'Not found in message'}`);
+    }
+    
+    return { reactionEvent, error: null, message };
+  } catch (error) {
+    console.error("Error adding reaction:", error);
+    
+    // Even if the Sendbird API fails, we still have local storage as backup
+    return { reactionEvent: null, error, message };
+  }
+};
+
+/**
+ * Remove an emoji reaction from a message
+ * @param {Object} message - Sendbird message object
+ * @param {string} emojiKey - Key of the emoji to remove
+ * @returns {Promise<Object>} - The reaction event object
+ */
+export const removeReaction = async (message, emojiKey) => {
+  if (!message || !emojiKey) {
+    throw new Error("Message and emoji key are required");
+  }
+  
+  try {
+    console.log(`Removing reaction '${emojiKey}' from message:`, message.messageId);
+    
+    // Get current user ID from Sendbird if possible
+    let userId = null;
+    try {
+      // Try to get the Sendbird instance to find current user
+      const sb = window.sendbird || window.SendBird || (window.SBUGlobal && window.SBUGlobal.sbInstance);
+      if (sb) {
+        userId = sb.currentUser?.userId;
+      }
+    } catch (e) {
+      console.warn('Unable to get current userId:', e);
+    }
+    
+    // 1. First, remove from local storage for persistence regardless of Sendbird API result
+    if (userId) {
+      saveReactionToLocalStorage(userId, message.messageId, emojiKey, false);
+    }
+    
+    // 2. Then try the standard Sendbird API approach
+    const reactionEvent = await message.deleteReaction(emojiKey);
+    console.log('REACTION REMOVAL EVENT:', reactionEvent);
+    
+    // Apply the event to the message object if the method exists
+    if (message.applyReactionEvent && typeof message.applyReactionEvent === 'function') {
+      message.applyReactionEvent(reactionEvent);
+    }
+    
+    // 3. Verify and log results
+    if (message.reactions) {
+      const stillExists = message.reactions.some(r => r.key === emojiKey && 
+                           (r.userIds ? r.userIds.includes(reactionEvent.userId) : false));
+      console.log(`Reaction removal status: ${stillExists ? 'Still exists (failed)' : 'Successfully removed'}`);
+    }
+    
+    return { reactionEvent, error: null, message };
+  } catch (error) {
+    console.error("Error removing reaction:", error);
+    
+    // Even if the Sendbird API fails, we still have local storage as backup
+    return { reactionEvent: null, error, message };
+  }
+};
+
 export const sendFileMessage = async (channel, files, messageText = "", userId) => {
   if (!channel || !files || files.length === 0) {
     throw new Error("Channel and files are required");

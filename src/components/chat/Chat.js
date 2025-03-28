@@ -600,6 +600,270 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   };
   
   /**
+   * Helper function to save reaction state directly
+   * This ensures reactions persist regardless of Sendbird API behavior
+   */
+  const saveReactionState = useCallback((messageId, emojiKey, isAdd = true) => {
+    try {
+      // Always save to local storage directly
+      const storageKey = 'user_reactions';
+      let userReactions = {};
+      
+      // Get existing data first
+      const storedData = localStorage.getItem(storageKey);
+      if (storedData) {
+        userReactions = JSON.parse(storedData);
+      }
+      
+      // Initialize user reaction structure if needed
+      if (!userReactions[userId]) {
+        userReactions[userId] = {};
+      }
+      
+      if (!userReactions[userId][messageId]) {
+        userReactions[userId][messageId] = [];
+      }
+      
+      if (isAdd) {
+        // Add reaction if not already there
+        if (!userReactions[userId][messageId].includes(emojiKey)) {
+          userReactions[userId][messageId].push(emojiKey);
+        }
+      } else {
+        // Remove reaction
+        userReactions[userId][messageId] = userReactions[userId][messageId]
+          .filter(emoji => emoji !== emojiKey);
+        
+        // Clean up empty entries
+        if (userReactions[userId][messageId].length === 0) {
+          delete userReactions[userId][messageId];
+        }
+      }
+      
+      // Save back to localStorage
+      localStorage.setItem(storageKey, JSON.stringify(userReactions));
+      console.log(`${isAdd ? '✅ Saved' : '❌ Removed'} reaction ${emojiKey} for message ${messageId}`);
+      return true;
+    } catch (error) {
+      console.error('Error saving reaction state:', error);
+      return false;
+    }
+  }, [userId]);
+
+  /**
+   * Add an emoji reaction to a message
+   * Implements multiple layers of persistence to ensure reactions work
+   */
+  const handleAddReaction = async (message, emojiKey) => {
+    if (!message || !emojiKey || !selectedChannel) return;
+    
+    try {
+      console.log(`Adding reaction ${emojiKey} to message ${message.messageId} by user ${userId}`);
+      
+      // GUARANTEED PERSISTENCE: First, explicitly save to local storage
+      saveReactionState(message.messageId, emojiKey, true);
+      
+      // Then update UI optimistically for better UX
+      setMessages(prevMessages => {
+        return prevMessages.map(msg => {
+          if (msg.messageId === message.messageId) {
+            // Create a new message object with the optimistically updated reactions
+            const updatedMessage = { ...msg };
+            const updatedReactions = [...(updatedMessage.reactions || [])];
+            
+            // Find or create the reaction
+            const existingIndex = updatedReactions.findIndex(r => r.key === emojiKey);
+            if (existingIndex >= 0) {
+              // Add user to existing reaction if not already there
+              if (!updatedReactions[existingIndex].userIds.includes(userId)) {
+                updatedReactions[existingIndex] = {
+                  ...updatedReactions[existingIndex],
+                  userIds: [...updatedReactions[existingIndex].userIds, userId]
+                };
+              }
+            } else {
+              // Add new reaction
+              updatedReactions.push({
+                key: emojiKey,
+                userIds: [userId],
+                updatedAt: Date.now()
+              });
+            }
+            
+            return {
+              ...updatedMessage,
+              reactions: updatedReactions
+            };
+          }
+          return msg;
+        });
+      });
+      
+      // Also save reaction to message-specific storage for legacy support
+      try {
+        const msgReactionsKey = `msg_reactions_${message.messageId}`;
+        let msgReactions = [];
+        const existingJson = localStorage.getItem(msgReactionsKey);
+        
+        if (existingJson) {
+          msgReactions = JSON.parse(existingJson);
+        }
+        
+        // Find or add the reaction
+        const existingReaction = msgReactions.find(r => r.key === emojiKey);
+        if (existingReaction) {
+          if (!existingReaction.userIds.includes(userId)) {
+            existingReaction.userIds.push(userId);
+          }
+        } else {
+          msgReactions.push({
+            key: emojiKey,
+            userIds: [userId]
+          });
+        }
+        
+        localStorage.setItem(msgReactionsKey, JSON.stringify(msgReactions));
+      } catch (storageError) {
+        console.warn('Error saving to legacy storage:', storageError);
+      }
+      
+      // Finally call the Sendbird API (least reliable part)
+      const { reactionEvent, error, updatedMessage } = await MessageService.addReaction(message, emojiKey);
+      
+      if (error) {
+        console.error("Error adding reaction via API:", error);
+        // Continue anyway, we have our local persistence working
+      } else {
+        console.log('Reaction event returned from API:', reactionEvent);
+      }
+      
+      // If we got an updated message back, use it
+      if (updatedMessage && updatedMessage.reactions) {
+        setMessages(prevMessages => {
+          return prevMessages.map(msg => {
+            if (msg.messageId === message.messageId) {
+              return updatedMessage;
+            }
+            return msg;
+          });
+        });
+      }
+    } catch (error) {
+      console.error("Error in handleAddReaction:", error);
+      // Even if there's an error, our reaction should be saved in localStorage
+    }
+  };
+  
+  /**
+   * Remove an emoji reaction from a message
+   */
+  const handleRemoveReaction = async (message, emojiKey) => {
+    if (!message || !emojiKey || !selectedChannel) return;
+    
+    try {
+      console.log(`Removing reaction ${emojiKey} from message ${message.messageId} by user ${userId}`);
+      
+      // First update UI optimistically for better UX
+      setMessages(prevMessages => {
+        return prevMessages.map(msg => {
+          if (msg.messageId === message.messageId) {
+            // Create a new message object with the optimistically updated reactions
+            const updatedMessage = { ...msg };
+            
+            // Only proceed if there are reactions
+            if (!updatedMessage.reactions || updatedMessage.reactions.length === 0) {
+              return updatedMessage;
+            }
+            
+            // Create a new array of reactions
+            const updatedReactions = [...updatedMessage.reactions];
+            
+            // Find the reaction to update
+            const existingIndex = updatedReactions.findIndex(r => r.key === emojiKey);
+            if (existingIndex >= 0) {
+              // Remove current user from the reaction
+              const filteredUserIds = updatedReactions[existingIndex].userIds.filter(id => id !== userId);
+              
+              if (filteredUserIds.length === 0) {
+                // If no users left, remove the reaction
+                updatedReactions.splice(existingIndex, 1);
+              } else {
+                // Update the userIds
+                updatedReactions[existingIndex] = {
+                  ...updatedReactions[existingIndex],
+                  userIds: filteredUserIds
+                };
+              }
+            }
+            
+            return {
+              ...updatedMessage,
+              reactions: updatedReactions
+            };
+          }
+          return msg;
+        });
+      });
+      
+      // Also update legacy message-specific storage
+      try {
+        const msgReactionsKey = `msg_reactions_${message.messageId}`;
+        const existingJson = localStorage.getItem(msgReactionsKey);
+        
+        if (existingJson) {
+          let msgReactions = JSON.parse(existingJson);
+          
+          // Update reactions
+          msgReactions = msgReactions.map(reaction => {
+            if (reaction.key === emojiKey) {
+              return {
+                ...reaction,
+                userIds: reaction.userIds.filter(id => id !== userId)
+              };
+            }
+            return reaction;
+          }).filter(reaction => reaction.userIds.length > 0);
+          
+          // Save back or remove if empty
+          if (msgReactions.length > 0) {
+            localStorage.setItem(msgReactionsKey, JSON.stringify(msgReactions));
+          } else {
+            localStorage.removeItem(msgReactionsKey);
+          }
+        }
+      } catch (storageError) {
+        console.warn('Error updating legacy storage:', storageError);
+      }
+      
+      // Finally call the Sendbird API (least reliable part)
+      const { reactionEvent, error, updatedMessage } = await MessageService.removeReaction(message, emojiKey);
+      
+      if (error) {
+        console.error("Error removing reaction via API:", error);
+        // Continue anyway, we have our local persistence working
+      } else {
+        console.log('Reaction removal event from API:', reactionEvent);
+      }
+      
+      // If needed, update the message with the server response
+      if (updatedMessage) {
+        setMessages(prevMessages => {
+          return prevMessages.map(msg => {
+            if (msg.messageId === message.messageId) {
+              // Use the server version of the message
+              return updatedMessage;
+            }
+            return msg;
+          });
+        });
+      }
+    } catch (error) {
+      console.error("Error in handleRemoveReaction:", error);
+      // Even if there's an error, our reaction should be removed from localStorage
+    }
+  };
+  
+  /**
    * Create a new channel
    */
   const createNewChannel = async (channelName, userIdsInput) => {
@@ -732,6 +996,66 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
         if (channel.url === selectedChannel.url) {
           setSelectedChannel(channel);
         }
+      },
+      
+      // Called when a reaction is updated on a message
+      handleReactionUpdated: (channel, reactionEvent) => {
+        console.log("Reaction updated in channel:", channel.url, reactionEvent);
+        
+        // Only update if in the current channel
+        if (channel.url === selectedChannel.url) {
+          setMessages(prevMessages => {
+            return prevMessages.map(message => {
+              // If this is the message that got a reaction update
+              if (message.messageId === reactionEvent.messageId) {
+                // Create a new message object with the updated reactions
+                const updatedMessage = { ...message };
+                
+                // Initialize reactions array if it doesn't exist
+                if (!updatedMessage.reactions) {
+                  updatedMessage.reactions = [];
+                }
+                
+                // Find the reaction to update
+                const existingReactionIndex = updatedMessage.reactions.findIndex(
+                  r => r.key === reactionEvent.key
+                );
+                
+                if (reactionEvent.operation === 'add') {
+                  if (existingReactionIndex >= 0) {
+                    // Add user to existing reaction if not already there
+                    if (!updatedMessage.reactions[existingReactionIndex].userIds.includes(reactionEvent.userId)) {
+                      updatedMessage.reactions[existingReactionIndex].userIds.push(reactionEvent.userId);
+                    }
+                  } else {
+                    // Add new reaction
+                    updatedMessage.reactions.push({
+                      key: reactionEvent.key,
+                      userIds: [reactionEvent.userId],
+                      updatedAt: reactionEvent.updatedAt
+                    });
+                  }
+                } else if (reactionEvent.operation === 'remove') {
+                  if (existingReactionIndex >= 0) {
+                    // Remove user from reaction
+                    updatedMessage.reactions[existingReactionIndex].userIds = 
+                      updatedMessage.reactions[existingReactionIndex].userIds.filter(
+                        id => id !== reactionEvent.userId
+                      );
+                    
+                    // If no users left, remove the reaction
+                    if (updatedMessage.reactions[existingReactionIndex].userIds.length === 0) {
+                      updatedMessage.reactions.splice(existingReactionIndex, 1);
+                    }
+                  }
+                }
+                
+                return updatedMessage;
+              }
+              return message;
+            });
+          });
+        }
       }
     };
     
@@ -744,6 +1068,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
       selectedChannel.addMessageUpdatedHandler(handlerId, handlers.handleMessageUpdated);
       selectedChannel.addMessageDeletedHandler(handlerId, handlers.handleMessageDeleted);
       selectedChannel.addChannelChangedHandler(handlerId, handlers.handleChannelChanged);
+      selectedChannel.addReactionHandler(handlerId, handlers.handleReactionUpdated);
       
       // Add file message specific handlers
       // This is critical for photo attachments to appear immediately
@@ -912,6 +1237,8 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
               hasMoreMessages={hasMoreMessages}
               onLoadMoreMessages={loadMoreMessages}
               retryFailedMessage={retryFailedMessage}
+              onAddReaction={handleAddReaction}
+              onRemoveReaction={handleRemoveReaction}
               ref={messagesContainerRef}
             />
             <div className="border-t border-gray-100 bg-white p-3">

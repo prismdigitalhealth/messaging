@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from "react";
 import { getMessageText, formatMessageTime, groupMessages } from "./utils";
+import EmojiReactions from "./EmojiReactions";
 
 /**
  * Renders an appropriate file attachment preview based on the file type
@@ -434,7 +435,9 @@ const MessageList = ({
   isLoadingMoreMessages,
   hasMoreMessages,
   onLoadMoreMessages,
-  retryFailedMessage
+  retryFailedMessage,
+  onAddReaction,
+  onRemoveReaction
 }) => {
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -450,13 +453,35 @@ const MessageList = ({
     }
   };
   
-  // Scroll to bottom on initial load or when new messages arrive
+  // Track message count and last message ID for smarter scrolling
+  const previousMessagesLengthRef = useRef(messages.length);
+  const previousLastMessageIdRef = useRef(messages.length > 0 ? messages[messages.length - 1]?.messageId : null);
+  
+  // Smarter scrolling that only scrolls on new messages, not on reaction changes
   useEffect(() => {
-    const shouldScrollToBottom = !isLoadingMoreMessages;
+    // Get current message info
+    const currentMessagesLength = messages.length;
+    const lastMessageId = messages.length > 0 ? messages[messages.length - 1]?.messageId : null;
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const prevMessagesLength = previousMessagesLengthRef.current;
+    const prevLastMessageId = previousLastMessageIdRef.current;
+    
+    // Determine if this is a new message or just a reaction update
+    const isNewMessage = lastMessageId !== prevLastMessageId || currentMessagesLength > prevMessagesLength;
+    const isMyMessage = lastMessage && lastMessage.sender?.userId === currentUserId;
+    
+    // Should we scroll to bottom?
+    const shouldScrollToBottom = !isLoadingMoreMessages && isNewMessage;
+    
+    // Only scroll when there's an actual new message (not just a reaction update)
     if (shouldScrollToBottom) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      messagesEndRef.current?.scrollIntoView({ behavior: isMyMessage ? "auto" : "smooth" });
     }
-  }, [messages, isLoadingMoreMessages]);
+    
+    // Update refs for next comparison
+    previousMessagesLengthRef.current = currentMessagesLength;
+    previousLastMessageIdRef.current = lastMessageId;
+  }, [messages, isLoadingMoreMessages, currentUserId]);
   
   // Group messages by sender/time
   const messageGroups = groupMessages(messages);
@@ -533,14 +558,28 @@ const MessageList = ({
                       return (
                         <div
                           key={`message-${message.messageId || messageIndex}`}
-                          className={`mb-1.5 last:mb-0 max-w-[80%] group relative`}
+                          className={`mb-3 last:mb-0 max-w-[80%] group relative pt-6`}
                         >
                           <div
                             className={`px-3 py-2 text-sm break-words overflow-hidden ${
                               isCurrentUser
                                 ? "bg-gray-800 text-white rounded-2xl rounded-tr-sm shadow-sm"
                                 : "bg-white text-gray-800 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100"
-                            } ${isPending ? "opacity-70" : ""}`}
+                            } ${isPending ? "opacity-70" : ""} relative z-10`}
+                            onDoubleClick={() => {
+                              // Only show emoji picker for non-pending, non-failed messages
+                              if (!message._isPending && !message._isFailed && 
+                                  !message._isSystemMessage && !message._isLoading) {
+                                // Find the EmojiReactions component for this message and toggle its picker
+                                const messageElement = document.getElementById(`message-${message.messageId}`);
+                                if (messageElement) {
+                                  // Create a custom event to toggle the emoji picker
+                                  const event = new CustomEvent('toggleEmojiPicker');
+                                  messageElement.dispatchEvent(event);
+                                }
+                              }
+                            }}
+                            id={`message-${message.messageId}`}
                           >
                             {/* Show uploading state directly for better visibility */}
                             {message._isUploading ? (
@@ -591,6 +630,17 @@ const MessageList = ({
                             {(message.messageType === "file" || message.url || message._files || message.fileInfoList) && 
                              message.message && message.message.trim() !== "" && (
                               <div className="mt-2 text-sm">{message.message}</div>
+                            )}
+                            
+                            {/* Emoji reactions - positioned above the message bubble */}
+                            {!message._isPending && !message._isFailed && !message._isSystemMessage && !message._isLoading && (
+                              <EmojiReactions
+                                message={message}
+                                currentUserId={currentUserId}
+                                onAddReaction={onAddReaction}
+                                onRemoveReaction={onRemoveReaction}
+                                isCurrentUserMessage={isCurrentUser}
+                              />
                             )}
                             
                             {/* Pending indicator */}

@@ -167,26 +167,51 @@ export const extractTimestamp = (message) => {
 
 /**
  * Group messages by sender for better visual display
- * Messages from the same sender within 10 minutes will be grouped
+ * Messages from the same sender will be grouped if they're within a short time period
  */
 export const groupMessages = (messagesArray) => {
   const groups = [];
   let currentGroup = [];
+  
+  // Use a shorter time window (2 minutes) for same-user message grouping
+  const TIME_WINDOW_MS = 2 * 60 * 1000; // 2 minutes in milliseconds
+  
   messagesArray.forEach((message, index) => {
+    // Skip system messages, they always get their own group
+    if (message._isSystemMessage || message._isLoading) {
+      if (currentGroup.length > 0) {
+        groups.push([...currentGroup]);
+        currentGroup = [];
+      }
+      groups.push([message]);
+      return;
+    }
+    
     const prevMessage = index > 0 ? messagesArray[index - 1] : null;
-    const timeGap = prevMessage ? (message.createdAt - prevMessage.createdAt) > 10 * 60 * 1000 : true;
-    const senderChanged = prevMessage ? message.sender?.userId !== prevMessage.sender?.userId : true;
+    
+    // Consider messages as separate if from different senders or if time gap is too large
+    const timeGap = prevMessage ? (message.createdAt - prevMessage.createdAt) > TIME_WINDOW_MS : true;
+    const senderChanged = prevMessage ? 
+      (message.sender?.userId !== prevMessage.sender?.userId) ||
+      prevMessage._isSystemMessage || 
+      prevMessage._isLoading : 
+      true;
+    
     if (senderChanged || timeGap) {
       if (currentGroup.length > 0) {
         groups.push([...currentGroup]);
         currentGroup = [];
       }
     }
+    
     currentGroup.push(message);
   });
+  
+  // Add the last group if it has messages
   if (currentGroup.length > 0) {
     groups.push(currentGroup);
   }
+  
   return groups;
 };
 

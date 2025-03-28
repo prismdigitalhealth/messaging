@@ -340,26 +340,56 @@ export const connectToSendbird = async (sb, userId, nickname, onProgress) => {
   
   console.log(`Connecting to Sendbird with userId: ${userId}`);
   
-  // Connect to Sendbird
-  const user = await sb.connect(userId);
-  console.log("Successfully connected to Sendbird:", user);
-  
-  // Update user's nickname if provided
-  if (nickname) {
-    try {
-      await sb.updateCurrentUserInfo({
-        nickname: nickname
+  try {
+    // Connect to Sendbird with options that support reactions
+    const connectionOptions = {};
+    
+    // For Sendbird SDK v4, set options for reactions
+    if (sb.setConnectionOptions) {
+      sb.setConnectionOptions({
+        includeReactions: true  // Ensure reactions are included in messages
       });
-      console.log("Nickname updated successfully");
-    } catch (nicknameError) {
-      console.warn("Failed to update nickname:", nicknameError);
-      // Continue anyway, nickname update is not critical
+      console.log("Set connection options for reactions");
     }
+    
+    // Connect to Sendbird with user ID
+    const user = await sb.connect(userId);
+    console.log("Successfully connected to Sendbird:", user);
+    
+    // Update user's nickname if provided
+    if (nickname) {
+      try {
+        await sb.updateCurrentUserInfo({
+          nickname: nickname
+        });
+        console.log("Nickname updated successfully");
+      } catch (nicknameError) {
+        console.warn("Failed to update nickname:", nicknameError);
+        // Continue anyway, nickname update is not critical
+      }
+    }
+    
+    // Configure global Sendbird options for reactions if available
+    if (sb.options && typeof sb.options.setReaction === 'function') {
+      sb.options.setReaction(true);
+      console.log("Enabled reactions in Sendbird options");
+    }
+    
+    // Log connection status for debugging
+    console.log("Connection state:", {
+      connected: sb.currentUser !== null,
+      userId: sb.currentUser?.userId,
+      connectionState: sb.connectionState || 'unknown'
+    });
+    
+    onProgress && onProgress({ isConnected: true, isConnecting: false });
+    
+    return user;
+  } catch (connectError) {
+    console.error("Sendbird connection error:", connectError);
+    onProgress && onProgress({ isConnected: false, isConnecting: false });
+    throw connectError;
   }
-  
-  onProgress && onProgress({ isConnected: true, isConnecting: false });
-  
-  return user;
 };
 
 /**

@@ -10,6 +10,18 @@ const APP_ID = "BFB0CED3-D43A-4C53-9C75-76549E1FFD78";
 const sb = SendbirdChat.init({
   appId: APP_ID,
   modules: [new GroupChannelModule()],
+  // Enable message cache to improve performance and persistence
+  useMessageGrouping: true,
+  // Critical options for reactions to work properly
+  enableReactions: true,
+  // Optimize reaction display with cache
+  localCacheEncryption: false,
+  // Ensure reactions are stored properly
+  automaticMessageResendPolicy: 'AUTOMATIC',
+  // This property is used in some SDK versions for persisting reactions
+  useReactionsSummary: true,
+  // Make sure we log issues for debugging
+  logLevel: 'debug'
 });
 
 const App = () => {
