@@ -1239,6 +1239,8 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
               retryFailedMessage={retryFailedMessage}
               onAddReaction={handleAddReaction}
               onRemoveReaction={handleRemoveReaction}
+              channel={selectedChannel}
+              participants={selectedChannel?.members || []}
               ref={messagesContainerRef}
             />
             <div className="border-t border-gray-100 bg-white p-3">

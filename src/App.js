@@ -20,6 +20,12 @@ const sb = SendbirdChat.init({
   automaticMessageResendPolicy: 'AUTOMATIC',
   // This property is used in some SDK versions for persisting reactions
   useReactionsSummary: true,
+  // Enable read receipts tracking
+  enableReadReceipt: true,
+  // Enable delivery receipts tracking
+  enableDeliveryReceipt: true,
+  // Ensures read receipts work properly in group channels
+  enableChannelDashboard: true,
   // Make sure we log issues for debugging
   logLevel: 'debug'
 });

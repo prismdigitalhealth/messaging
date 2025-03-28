@@ -1,6 +1,8 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { getMessageText, formatMessageTime, groupMessages } from "./utils";
 import EmojiReactions from "./EmojiReactions";
+import MessageReadReceipt from "./MessageReadReceipt";
+import * as MessageService from "./services/MessageService";
 
 /**
  * Renders an appropriate file attachment preview based on the file type
@@ -437,8 +439,52 @@ const MessageList = ({
   onLoadMoreMessages,
   retryFailedMessage,
   onAddReaction,
-  onRemoveReaction
+  onRemoveReaction,
+  channel,
+  participants = []
 }) => {
+  // Track read receipts for messages
+  const [readReceipts, setReadReceipts] = useState({});
+  
+  // Fetch read receipts for messages
+  useEffect(() => {
+    if (!channel || !messages || messages.length === 0) return;
+    
+    // Only fetch read receipts for messages sent by current user
+    const userMessages = messages.filter(msg => 
+      msg.sender?.userId === currentUserId && 
+      !msg._isPending && 
+      !msg._isSystemMessage
+    );
+    
+    // Fetch read receipts for each message
+    const fetchReadReceipts = async () => {
+      const receipts = {};
+      
+      for (const message of userMessages) {
+        try {
+          if (message.messageId) {
+            const receipt = await MessageService.getMessageReadReceipts(channel, message);
+            receipts[message.messageId] = receipt;
+          }
+        } catch (error) {
+          console.error(`Error fetching read receipt for message ${message.messageId}:`, error);
+        }
+      }
+      
+      setReadReceipts(prevReceipts => ({
+        ...prevReceipts,
+        ...receipts
+      }));
+    };
+    
+    fetchReadReceipts();
+    
+    // Set up interval to refresh read receipts
+    const intervalId = setInterval(fetchReadReceipts, 10000); // Every 10 seconds
+    
+    return () => clearInterval(intervalId);
+  }, [channel, messages, currentUserId]);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   
@@ -647,7 +693,15 @@ const MessageList = ({
                               <div className="mt-2 text-sm">{message.message}</div>
                             )}
                             
-
+                            {/* Read receipt indicator */}
+                            <MessageReadReceipt
+                              message={message}
+                              channel={channel}
+                              currentUserId={currentUserId}
+                              participants={participants}
+                              isCurrentUserMessage={isCurrentUser}
+                              readReceipts={message.messageId ? readReceipts[message.messageId] : null}
+                            />
                             
                             {/* Pending indicator */}
                             {isPending && (
