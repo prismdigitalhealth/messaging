@@ -525,7 +525,7 @@ const MessageList = ({
                 </div>
               ) : (
                 <>
-                  {/* Sender info and timestamp */}
+                  {/* Sender info and timestamp - shown ONCE per group */}
                   <div className={`flex items-baseline mb-1.5 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
                     {!isCurrentUser && (
                       <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center text-xs text-gray-700 mr-2">
@@ -544,7 +544,7 @@ const MessageList = ({
                     </div>
                   </div>
                   
-                  {/* Message bubbles */}
+                  {/* Message bubbles - all from the same author */}
                   <div 
                     className={`flex flex-col ${
                       isCurrentUser ? "items-end" : "items-start"
@@ -558,10 +558,25 @@ const MessageList = ({
                       return (
                         <div
                           key={`message-${message.messageId || messageIndex}`}
-                          className={`mb-3 last:mb-0 max-w-[80%] group relative pt-6`}
+                          className={`${messageIndex === group.length - 1 ? 'mb-1' : 'mb-0.5'} group relative ${message.reactions && message.reactions.length > 0 ? 'mt-5' : ''} ${messageIndex > 0 ? 'mt-0.5' : ''}`}
+                          style={{ maxWidth: '80%', minWidth: message.reactions && message.reactions.length > 3 ? '200px' : 'auto' }}
                         >
+                          {/* Emoji reactions positioned directly above the message */}
+                          {!message._isPending && !message._isFailed && !message._isSystemMessage && !message._isLoading && (
+                            <div className="absolute -top-6 left-0 right-0 z-20">
+                              <EmojiReactions
+                                message={message}
+                                currentUserId={currentUserId}
+                                onAddReaction={onAddReaction}
+                                onRemoveReaction={onRemoveReaction}
+                                isCurrentUserMessage={isCurrentUser}
+                              />
+                            </div>
+                          )}
+                          
+                          {/* Message bubble with text */}
                           <div
-                            className={`px-3 py-2 text-sm break-words overflow-hidden ${
+                            className={`px-3 py-2 text-sm break-words overflow-hidden ${messageIndex > 0 ? (isCurrentUser ? 'rounded-tr-sm' : 'rounded-tl-sm') : ''} ${
                               isCurrentUser
                                 ? "bg-gray-800 text-white rounded-2xl rounded-tr-sm shadow-sm"
                                 : "bg-white text-gray-800 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100"
@@ -632,16 +647,7 @@ const MessageList = ({
                               <div className="mt-2 text-sm">{message.message}</div>
                             )}
                             
-                            {/* Emoji reactions - positioned above the message bubble */}
-                            {!message._isPending && !message._isFailed && !message._isSystemMessage && !message._isLoading && (
-                              <EmojiReactions
-                                message={message}
-                                currentUserId={currentUserId}
-                                onAddReaction={onAddReaction}
-                                onRemoveReaction={onRemoveReaction}
-                                isCurrentUserMessage={isCurrentUser}
-                              />
-                            )}
+
                             
                             {/* Pending indicator */}
                             {isPending && (

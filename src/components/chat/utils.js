@@ -173,8 +173,9 @@ export const groupMessages = (messagesArray) => {
   const groups = [];
   let currentGroup = [];
   
-  // Use a shorter time window (2 minutes) for same-user message grouping
-  const TIME_WINDOW_MS = 2 * 60 * 1000; // 2 minutes in milliseconds
+  // Use a longer time window (5 minutes) for same-user message grouping
+  // This ensures consecutive messages from the same author stay grouped
+  const TIME_WINDOW_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
   
   messagesArray.forEach((message, index) => {
     // Skip system messages, they always get their own group

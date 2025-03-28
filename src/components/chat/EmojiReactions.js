@@ -254,14 +254,15 @@ const EmojiReactions = ({
       {/* Existing reactions - displayed above the message bubble */}
       {usedReactions.length > 0 && (
         <div 
-          className={`flex flex-wrap gap-0.5 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'}`}
+          className={`inline-flex gap-1.5 mt-1 ${isCurrentUserMessage ? 'justify-end' : 'justify-start'} overflow-visible`}
           style={{ 
-            position: 'absolute',
-            bottom: '100%',
-            left: isCurrentUserMessage ? 'auto' : '0',
-            right: isCurrentUserMessage ? '0' : 'auto',
-            marginBottom: '-5px',
-            zIndex: 50
+            position: 'relative',
+            zIndex: 20,
+            marginLeft: isCurrentUserMessage ? 'auto' : '0',
+            marginRight: isCurrentUserMessage ? '0' : 'auto',
+            maxWidth: 'calc(100% - 5px)', /* Ensure reactions stay within message width */
+            whiteSpace: 'nowrap', /* Prevent wrapping to new line */
+            pointerEvents: 'auto' /* Ensure clicks register */
           }}
         >
           {usedReactions.map(reaction => {
@@ -271,10 +272,11 @@ const EmojiReactions = ({
               <button
                 key={reaction.key}
                 onClick={() => handleEmojiClick(reaction.key)}
-                className={`inline-flex items-center px-1 py-0.5 rounded-full text-xs shadow-sm
+                className={`inline-flex items-center px-2 py-1 rounded-full text-xs
                   ${reaction.hasReacted 
-                    ? 'bg-blue-500 text-white font-bold' 
-                    : 'bg-gray-100 border border-gray-200 text-gray-600'}`}
+                    ? 'bg-white text-blue-600 font-bold shadow-md' 
+                    : 'bg-white border border-gray-200 text-gray-600 shadow-sm'}`}
+                style={{ position: 'relative', zIndex: 20 }}
               >
                 <span>{reaction.emoji}</span>
                 {reaction.count > 1 && <span className="ml-0.5 text-[10px]">{reaction.count}</span>}
