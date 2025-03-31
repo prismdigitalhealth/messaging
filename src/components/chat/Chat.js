@@ -3,6 +3,7 @@ import ChannelList from "./ChannelList";
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 import CreateChannelModal from "./CreateChannelModal";
+import { useMobileDetection, useMobileSidebar } from "./MobileDetection";
 
 // Import services
 import * as ChannelService from "./services/ChannelService";
@@ -14,6 +15,14 @@ import * as MessageService from "./services/MessageService";
  * - Manages channels and messages
  * - Coordinates between sub-components
  * - Supports both event-based updates and manual refresh
+ */
+/**
+ * Main Chat component that integrates all chat functionality
+ * - Handles connection to Sendbird
+ * - Manages channels and messages
+ * - Mobile-optimized with responsive layout
+ * - Collapsible sidebar for channel selection on mobile
+ * - Hides right panel on mobile devices
  */
 const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   // Channel state
@@ -1151,13 +1160,51 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   // We will re-implement this after the application is stable
   // END OF REMOVED CODE
   
+  // Get mobile detection and sidebar state
+  const isMobile = useMobileDetection();
+  const { isOpen: isSidebarOpen, toggleSidebar, closeSidebar } = useMobileSidebar();
+  
+  // Close sidebar when selecting a channel on mobile
+  const handleSelectChannel = async (channel) => {
+    await selectChannel(channel);
+    if (isMobile) {
+      closeSidebar();
+    }
+  };
+  
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-50 relative overflow-hidden">
+      {/* Mobile Overlay - show when sidebar is open on mobile */}
+      {isMobile && isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-20"
+          onClick={closeSidebar}
+        />
+      )}
+      
       {/* Sidebar - Channel List */}
-      <div className="w-[350px] bg-white border-r border-gray-200 flex flex-col">
+      <div 
+        className={`${
+          isMobile 
+            ? `fixed inset-y-0 left-0 z-30 w-[85%] max-w-[350px] transform transition-transform duration-300 ease-in-out ${
+                isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+              }`
+            : 'w-[350px]'
+        } bg-white border-r border-gray-200 flex flex-col`}
+      >
         {/* Sidebar header */}
-        <div className="p-4 border-b border-gray-100">
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <h1 className="text-lg font-semibold text-gray-800">Messages</h1>
+          {isMobile && (
+            <button 
+              onClick={closeSidebar}
+              className="p-1 rounded-full hover:bg-gray-100"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
         
         {/* Channel list container */}
@@ -1165,7 +1212,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
           <ChannelList
             channels={channels}
             selectedChannel={selectedChannel}
-            onSelectChannel={selectChannel}
+            onSelectChannel={handleSelectChannel}
             unreadCounts={channelUnreadCounts}
             isConnected={isConnected}
             onCreateChannelClick={() => setIsCreatingChannel(true)}
@@ -1189,38 +1236,60 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
       <div className="flex-1 flex flex-col bg-white">
         {/* Channel Header */}
         {selectedChannel ? (
-          <div className="bg-white py-3 px-6 border-b border-gray-200 flex items-center justify-between">
-            <div className="flex items-center">
-              <div className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center mr-3">
+          <div className="bg-white py-3 px-4 md:px-6 border-b border-gray-200 flex items-center justify-between">
+            {/* Mobile menu button */}
+            {isMobile && (
+              <button 
+                onClick={toggleSidebar}
+                className="p-1 mr-2 rounded-full hover:bg-gray-100"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            )}
+            
+            <div className="flex items-center flex-1">
+              <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center mr-2 md:mr-3 flex-shrink-0">
                 {selectedChannel.name ? selectedChannel.name.charAt(0).toUpperCase() : "C"}
               </div>
-              <div>
-                <h2 className="text-sm font-semibold text-gray-800">{selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}</h2>
-                <p className="text-xs text-gray-400 text-[10px]">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-gray-800 truncate">{selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}</h2>
+                <p className="text-xs text-gray-400 truncate">
                   Last seen {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                 </p>
               </div>
             </div>
-            <div className="flex space-x-2">
-              <button className="text-blue-500 p-2 rounded-full hover:bg-blue-50">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex space-x-1 md:space-x-2">
+              <button className="text-blue-500 p-1 md:p-2 rounded-full hover:bg-blue-50">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                 </svg>
               </button>
-              <button className="text-blue-500 p-2 rounded-full hover:bg-blue-50">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <button className="text-blue-500 p-1 md:p-2 rounded-full hover:bg-blue-50">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </button>
-              <button className="text-gray-400 p-2 rounded-full hover:bg-gray-100">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <button className="text-gray-400 p-1 md:p-2 rounded-full hover:bg-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:h-6 md:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                 </svg>
               </button>
             </div>
           </div>
         ) : (
-          <div className="bg-white p-4 border-b border-gray-200 shadow-sm">
+          <div className="bg-white p-4 border-b border-gray-200 shadow-sm flex items-center">
+            {isMobile && (
+              <button 
+                onClick={toggleSidebar}
+                className="p-1 mr-3 rounded-full hover:bg-gray-100"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            )}
             <div className="w-full text-center text-gray-400">
               {isConnected ? "Select a conversation" : "Connecting..."}
             </div>
@@ -1243,7 +1312,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
               participants={selectedChannel?.members || []}
               ref={messagesContainerRef}
             />
-            <div className="border-t border-gray-100 bg-white p-3">
+            <div className="border-t border-gray-100 bg-white p-2 md:p-3">
               <MessageInput
                 onSendMessage={sendMessage}
                 onSendFileMessage={sendFileMessage}
@@ -1253,7 +1322,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center bg-white">
-            <div className="text-center max-w-md p-8 rounded-lg">
+            <div className="text-center max-w-md p-6 md:p-8 rounded-lg">
               {isConnecting ? (
                 <div className="flex flex-col items-center p-4">
                   <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -1271,9 +1340,9 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
                   </button>
                 </div>
               ) : (
-                <div className="p-8">
-                  <div className="w-20 h-20 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="p-6 md:p-8">
+                  <div className="w-16 h-16 md:w-20 md:h-20 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 md:h-10 md:w-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                     </svg>
                   </div>
@@ -1292,15 +1361,17 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
         )}
       </div>
       
-      {/* Simple Right Side Panel */}
-      <div className="w-[300px] bg-white border-l border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="text-sm font-medium text-gray-800">Right Side Panel</h3>
+      {/* Simple Right Side Panel - hidden on mobile */}
+      {!isMobile && (
+        <div className="w-[300px] bg-white border-l border-gray-200 flex flex-col">
+          <div className="p-4 border-b border-gray-200">
+            <h3 className="text-sm font-medium text-gray-800">Right Side Panel</h3>
+          </div>
+          <div className="flex-1 p-4">
+            {/* Empty panel content */}
+          </div>
         </div>
-        <div className="flex-1 p-4">
-          {/* Empty panel content */}
-        </div>
-      </div>
+      )}
       
       {/* Create Channel Modal */}
       <CreateChannelModal
