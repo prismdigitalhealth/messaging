@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from "react";
 import { getMessageText, formatMessageTime, groupMessages } from "./utils";
 import EmojiReactions from "./EmojiReactions";
 import MessageReadReceipt from "./MessageReadReceipt";
+import OnlineStatusIndicator from "./OnlineStatusIndicator";
 import * as MessageService from "./services/MessageService";
 
 /**
@@ -441,7 +442,9 @@ const MessageList = ({
   onAddReaction,
   onRemoveReaction,
   channel,
-  participants = []
+  participants = [],
+  userStatuses = {},
+  getUserStatus
 }) => {
   // Track read receipts for messages
   const [readReceipts, setReadReceipts] = useState({});
@@ -574,16 +577,33 @@ const MessageList = ({
                   {/* Sender info and timestamp - shown ONCE per group */}
                   <div className={`flex items-baseline mb-1.5 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
                     {!isCurrentUser && (
-                      <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center text-xs text-gray-700 mr-2">
+                      <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center text-xs text-gray-700 mr-2 relative">
                         {(firstMessage.sender?.nickname || firstMessage.sender?.userId || "U").charAt(0).toUpperCase()}
+                        
+                        {/* Enhanced online status indicator */}
+                        <div className="absolute -bottom-0.5 -right-0.5">
+                          <OnlineStatusIndicator 
+                            isOnline={firstMessage.sender?.connectionStatus === 'online'} 
+                            size="sm" 
+                          />
+                        </div>
                       </div>
                     )}
-                    <div className="font-medium text-xs text-gray-700">
-                      {isCurrentUser
-                        ? "You"
-                        : firstMessage.sender?.nickname || 
-                          firstMessage.sender?.userId || 
-                          "Unknown User"}
+                    <div className="flex items-center">
+                      <div className="font-medium text-xs text-gray-700">
+                        {isCurrentUser
+                          ? "You"
+                          : firstMessage.sender?.nickname || 
+                            firstMessage.sender?.userId || 
+                            "Unknown User"}
+                      </div>
+                      
+                      {/* Enhanced online status indicator with text */}
+                      {!isCurrentUser && firstMessage.sender?.connectionStatus === 'online' && (
+                        <div className="ml-1.5">
+                          <OnlineStatusIndicator isOnline={true} size="xs" showText={true} />
+                        </div>
+                      )}
                     </div>
                     <div className="text-[10px] text-gray-400 ml-2">
                       {formatMessageTime(firstMessage.createdAt)}

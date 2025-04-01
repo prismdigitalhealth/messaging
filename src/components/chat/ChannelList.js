@@ -1,9 +1,11 @@
 import React, { useRef, useState, useEffect } from "react";
 import { getMessagePreview, formatMessageTime } from "./utils";
+import OnlineStatusIndicator from "./OnlineStatusIndicator";
 
 /**
  * Channel List component
  * Displays all channels with last message preview and unread indicators
+ * Shows online status for users in channels
  */
 const ChannelList = ({
   channels,
@@ -13,7 +15,9 @@ const ChannelList = ({
   isConnected,
   onCreateChannelClick,
   onRefreshChannels,
-  isRefreshing
+  isRefreshing,
+  userStatuses = {},
+  getUserStatus
 }) => {
   // Pull-to-refresh state
   const [isPulling, setIsPulling] = useState(false);
@@ -201,16 +205,64 @@ const ChannelList = ({
                   onClick={() => onSelectChannel(channel)}
                 >
                   <div className="flex items-center">
-                    <div className={`w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center mr-3 ${
+                    <div className={`w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center mr-3 relative ${
                       isSelected ? "bg-gray-800 text-white" : "bg-gray-200 text-gray-800"
                     }`}>
                       {channel.name ? channel.name.charAt(0).toUpperCase() : "C"}
+                      
+                      {/* Enhanced online status indicator for 1:1 chats */}
+                      {channel.members && channel.members.length === 2 && 
+                        (() => {
+                          // For 1:1 chats, if the other member is one of the channel members
+                          const channelMembers = channel.members || [];
+                          const otherMember = channelMembers.find(member => 
+                            member.userId !== (channel.currentUser?.userId || '')
+                          );
+                          
+                          if (otherMember) {
+                            // Check online status property directly on the member object
+                            const isOnline = otherMember.connectionStatus === 'online';
+                            
+                            return (
+                              <div className="absolute -bottom-0.5 -right-0.5">
+                                <OnlineStatusIndicator isOnline={isOnline} size="md" />
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()
+                      }
                     </div>
                     <div className="flex-grow min-w-0">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium truncate text-gray-900">
-                          {channel.name || `Channel ${channel.url.slice(-4)}`}
-                        </span>
+                        <div className="flex items-center">
+                          <span className="text-sm font-medium truncate text-gray-900">
+                            {channel.name || `Channel ${channel.url.slice(-4)}`}
+                          </span>
+                          
+                          {/* Display online status text for 1:1 chats */}
+                          {channel.members && channel.members.length === 2 && 
+                            (() => {
+                              // For 1:1 chats, if the other member is one of the channel members
+                              const channelMembers = channel.members || [];
+                              const otherMember = channelMembers.find(member => 
+                                member.userId !== (channel.currentUser?.userId || '')
+                              );
+                              
+                              if (otherMember) {
+                                const isOnline = otherMember.connectionStatus === 'online';
+                                if (isOnline) {
+                                  return (
+                                    <div className="ml-2">
+                                      <OnlineStatusIndicator isOnline={true} size="sm" showText={true} />
+                                    </div>
+                                  );
+                                }
+                              }
+                              return null;
+                            })()
+                          }
+                        </div>
                         {lastMessageTime && (
                           <span className="text-xs text-gray-500 ml-2 flex-shrink-0">{lastMessageTime}</span>
                         )}

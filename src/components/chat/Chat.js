@@ -4,6 +4,7 @@ import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 import CreateChannelModal from "./CreateChannelModal";
 import { useMobileDetection, useMobileSidebar } from "./MobileDetection";
+import { useUserPresence } from "./UserPresence";
 
 // Import services
 import * as ChannelService from "./services/ChannelService";
@@ -23,6 +24,7 @@ import * as MessageService from "./services/MessageService";
  * - Mobile-optimized with responsive layout
  * - Collapsible sidebar for channel selection on mobile
  * - Hides right panel on mobile devices
+ * - Displays online status of other users
  */
 const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   // Channel state
@@ -45,6 +47,26 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
   
   // UI state
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  
+  // User presence state - track online/offline status
+  const { userStatuses, getUserStatus, refreshUserPresence } = useUserPresence(selectedChannel, sb);
+  
+  // Set up periodic refresh of user presence data
+  useEffect(() => {
+    if (!selectedChannel) return;
+    
+    // Initial refresh
+    refreshUserPresence();
+    
+    // Set up interval for periodic refresh (every 30 seconds)
+    const presenceRefreshInterval = setInterval(() => {
+      refreshUserPresence();
+    }, 30000);
+    
+    return () => {
+      clearInterval(presenceRefreshInterval);
+    };
+  }, [selectedChannel, refreshUserPresence]);
   
   // Refs
   const messagesContainerRef = useRef(null);
@@ -1250,11 +1272,53 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
             )}
             
             <div className="flex items-center flex-1">
-              <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center mr-2 md:mr-3 flex-shrink-0">
+              <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center mr-2 md:mr-3 flex-shrink-0 relative">
                 {selectedChannel.name ? selectedChannel.name.charAt(0).toUpperCase() : "C"}
+                
+                {/* Show online status for 1:1 chats */}
+                {selectedChannel.members && selectedChannel.members.length === 2 && (
+                  (() => {
+                    // Find the other user (not current user)
+                    const otherUser = selectedChannel.members.find(member => 
+                      member.userId !== userId
+                    );
+                    
+                    if (otherUser) {
+                      return (
+                        <div className="absolute -bottom-0.5 -right-0.5">
+                          <div className={`w-3 h-3 rounded-full border-2 border-white ${otherUser.connectionStatus === 'online' ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()
+                )}
               </div>
               <div className="min-w-0">
-                <h2 className="text-sm font-semibold text-gray-800 truncate">{selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}</h2>
+                <div className="flex items-center">
+                  <h2 className="text-sm font-semibold text-gray-800 truncate">
+                    {selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}
+                  </h2>
+                  
+                  {/* Online status text */}
+                  {selectedChannel.members && selectedChannel.members.length === 2 && (
+                    (() => {
+                      const otherUser = selectedChannel.members.find(member => 
+                        member.userId !== userId
+                      );
+                      
+                      if (otherUser && otherUser.connectionStatus === 'online') {
+                        return (
+                          <div className="ml-2 flex items-center">
+                            <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1 animate-pulse"></span>
+                            <span className="text-xs text-green-500 font-medium">online</span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()
+                  )}
+                </div>
                 <p className="text-xs text-gray-400 truncate">
                   Last seen {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                 </p>
@@ -1311,6 +1375,8 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
               channel={selectedChannel}
               participants={selectedChannel?.members || []}
               ref={messagesContainerRef}
+              userStatuses={userStatuses}
+              getUserStatus={getUserStatus}
             />
             <div className="border-t border-gray-100 bg-white p-2 md:p-3">
               <MessageInput
