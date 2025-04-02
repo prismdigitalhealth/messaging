@@ -18,10 +18,14 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
   // Detect if we're on mobile to adjust sizing
   const isMobile = useMobileDetection();
 
-  // Auto-resize textarea when content changes
+  // Auto-resize textarea when content changes with better performance
   const autoResizeTextarea = () => {
     const textarea = textareaRef.current;
     if (!textarea) return;
+    
+    // Store the current scroll position of the container
+    const container = textarea.parentElement;
+    const scrollTop = container ? container.scrollTop : 0;
     
     // Reset height to auto to get the correct scrollHeight
     textarea.style.height = 'auto';
@@ -31,24 +35,72 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
     const minHeight = isMobile ? 40 : 100; // 40px on mobile, 100px on desktop
     const maxHeight = isMobile ? 150 : 500; // 150px on mobile, 500px on desktop
     
+    // Calculate optimal height
     const newHeight = Math.max(
       minHeight,
       Math.min(textarea.scrollHeight, maxHeight)
     );
-    textarea.style.height = `${newHeight}px`;
+    
+    // Apply the new height with a conditional check to avoid unnecessary DOM updates
+    if (textarea.style.height !== `${newHeight}px`) {
+      textarea.style.height = `${newHeight}px`;
+    }
+    
+    // Restore scroll position to avoid jumps
+    if (container && scrollTop > 0) {
+      container.scrollTop = scrollTop;
+    }
   };
 
-  // Apply auto-resize when message content changes
+  // Debounced auto-resize to improve performance with fast typing
   useEffect(() => {
+    // Immediate resize for responsive feel
     autoResizeTextarea();
+    
+    // Debounced resize to catch any edge cases
+    const debounceTimer = setTimeout(() => {
+      autoResizeTextarea();
+    }, 10);
+    
+    return () => clearTimeout(debounceTimer);
   }, [message]);
 
-  // Initialize textarea height when component mounts
+  // Initialize textarea height when component mounts with improved handling
   useEffect(() => {
-    // Small delay to ensure the DOM is fully rendered
+    // Set initial height immediately
+    autoResizeTextarea();
+    
+    // Check again after a delay to ensure the DOM is fully rendered
     const timer = setTimeout(() => {
       autoResizeTextarea();
     }, 50);
+    
+    // Add focus and blur event listeners for better UX
+    const textarea = textareaRef.current;
+    if (textarea) {
+      // Ensure proper height calculation when focused
+      const handleFocus = () => {
+        // Brief delay before resize to ensure proper calculation
+        setTimeout(autoResizeTextarea, 0);
+      };
+      
+      // Maintain proper height on blur
+      const handleBlur = () => {
+        autoResizeTextarea();
+      };
+      
+      // Add event listeners
+      textarea.addEventListener('focus', handleFocus);
+      textarea.addEventListener('blur', handleBlur);
+      
+      // Clean up event listeners
+      return () => {
+        clearTimeout(timer);
+        textarea.removeEventListener('focus', handleFocus);
+        textarea.removeEventListener('blur', handleBlur);
+      };
+    }
+    
     return () => clearTimeout(timer);
   }, []);
 
@@ -73,6 +125,15 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
         onSendFileMessage(selectedFiles, trimmedMessage);
         setSelectedFiles([]);
         setMessage("");
+        
+        // Reset textarea height immediately after sending
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.style.height = isMobile ? '40px' : '100px';
+          }
+          // Focus on textarea after sending for quick follow-up messages
+          textareaRef.current?.focus();
+        }, 0);
       }
       return;
     }
@@ -81,6 +142,15 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
     if (trimmedMessage && !isDisabled) {
       onSendMessage(trimmedMessage);
       setMessage("");
+      
+      // Reset textarea height immediately after sending
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = isMobile ? '40px' : '100px';
+        }
+        // Focus on textarea after sending for quick follow-up messages
+        textareaRef.current?.focus();
+      }, 0);
     }
   };
   
@@ -205,9 +275,13 @@ const MessageInput = ({ onSendMessage, onSendFileMessage, isDisabled }) => {
               style={{
                 minHeight: isMobile ? "40px" : "100px", // 40px on mobile, 100px on desktop
                 maxHeight: isMobile ? "150px" : "500px", // 150px on mobile, 500px on desktop
-                overflowY: message.length > (isMobile ? 100 : 400) ? "auto" : "hidden", // Show scrollbar for very long content
+                overflowY: message.length > (isMobile ? 100 : 400) ? "auto" : "hidden", // Show scrollbar for long content
                 borderRadius: "8px",
-                backgroundColor: isDisabled ? "#f1f3f5" : "#f8f9fa"
+                backgroundColor: isDisabled ? "#f1f3f5" : "#f8f9fa",
+                transition: "height 0.2s ease, background-color 0.2s ease", // Smoother transitions
+                lineHeight: "1.4", // Improved readability
+                paddingTop: isMobile ? "8px" : "10px", // Better vertical centering
+                paddingBottom: isMobile ? "8px" : "10px"
               }}
             />
           </div>
