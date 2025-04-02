@@ -1300,24 +1300,7 @@ const Chat = ({ userId, nickname = "", onConnectionError, sb }) => {
                     {selectedChannel.name || `Channel ${selectedChannel.url.slice(-4)}`}
                   </h2>
                   
-                  {/* Online status text */}
-                  {selectedChannel.members && selectedChannel.members.length === 2 && (
-                    (() => {
-                      const otherUser = selectedChannel.members.find(member => 
-                        member.userId !== userId
-                      );
-                      
-                      if (otherUser && otherUser.connectionStatus === 'online') {
-                        return (
-                          <div className="ml-2 flex items-center">
-                            <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1 animate-pulse"></span>
-                            <span className="text-xs text-green-500 font-medium">online</span>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()
-                  )}
+                  {/* Status text removed as requested */}
                 </div>
                 <p className="text-xs text-gray-400 truncate">
                   Last seen {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}

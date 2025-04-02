@@ -249,16 +249,7 @@ const ChannelList = ({
                                 member.userId !== (channel.currentUser?.userId || '')
                               );
                               
-                              if (otherMember) {
-                                const isOnline = otherMember.connectionStatus === 'online';
-                                if (isOnline) {
-                                  return (
-                                    <div className="ml-2">
-                                      <OnlineStatusIndicator isOnline={true} size="sm" showText={true} />
-                                    </div>
-                                  );
-                                }
-                              }
+                              /* Online status text removed as requested */
                               return null;
                             })()
                           }

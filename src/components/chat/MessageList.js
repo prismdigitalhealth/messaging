@@ -598,12 +598,7 @@ const MessageList = ({
                             "Unknown User"}
                       </div>
                       
-                      {/* Enhanced online status indicator with text */}
-                      {!isCurrentUser && firstMessage.sender?.connectionStatus === 'online' && (
-                        <div className="ml-1.5">
-                          <OnlineStatusIndicator isOnline={true} size="xs" showText={true} />
-                        </div>
-                      )}
+                      {/* Online status text removed as requested */}
                     </div>
                     <div className="text-[10px] text-gray-400 ml-2">
                       {formatMessageTime(firstMessage.createdAt)}
